@@ -208,3 +208,98 @@ export interface PaginationOptions {
   page?: number;
   limit?: number;
 }
+
+/** News post detail response (GET /api/v1/news/:msg_id). */
+export interface NewsPostResponse {
+  post: Envelope;
+  comments: Envelope[];
+}
+
+/** Profile update data for PUT /api/v1/profile. */
+export interface ProfileUpdateData {
+  display_name?: string;
+  avatar_cid?: string;
+  bio?: string;
+}
+
+/** DM conversations list response. */
+export interface DmConversationsResponse {
+  conversations: DmConversation[];
+  total: number;
+}
+
+/** DM messages response. */
+export interface DmMessagesResponse {
+  messages: Envelope[];
+  has_more: boolean;
+}
+
+/** Notification from the L2 node. */
+export interface Notification {
+  type: 'mention' | 'dm' | 'follow' | 'reply';
+  msg_id?: string;
+  channel_id?: string;
+  from: string;
+  timestamp: number;
+  preview?: string;
+}
+
+/** Notifications list response. */
+export interface NotificationsResponse {
+  notifications: Notification[];
+}
+
+/** Channel creation data for POST /api/v1/channels. */
+export interface ChannelCreateData {
+  slug: string;
+  display_name?: string;
+  description?: string;
+  channel_type?: number;
+}
+
+/** Channel creation response. */
+export interface ChannelCreateResponse {
+  channel_id: number;
+}
+
+/** User profile response (GET /api/v1/users/:address). */
+export interface UserProfileResponse {
+  user: User;
+  post_count: number;
+  channel_count: number;
+  follower_count: number;
+  following_count: number;
+}
+
+/** User posts response (GET /api/v1/users/:address/posts). */
+export interface UserPostsResponse {
+  posts: Envelope[];
+  total: number;
+  page: number;
+}
+
+/** Moderation reports response (GET /api/v1/moderation/reports). */
+export interface ModerationReportsResponse {
+  reports: Envelope[];
+  counter_votes: Envelope[];
+  current_score: number;
+  auto_flags: string[];
+}
+
+/** Moderation user trust response (GET /api/v1/moderation/user/:address). */
+export interface ModerationUserResponse {
+  reports_against: number;
+  reports_confirmed: number;
+  counter_votes_received: number;
+  reporter_reputation: number;
+  overall_trust_score: number;
+}
+
+/** Account export response. */
+export interface AccountExportResponse {
+  profile: User;
+  messages: Envelope[];
+  posts: Envelope[];
+  dms: Envelope[];
+  channels: number[];
+}

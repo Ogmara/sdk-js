@@ -5,6 +5,52 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-03-29
+
+### Added
+- Full spec endpoint coverage (25+ client methods):
+  - `getNewsPost()` — single news post with comments
+  - `getUserProfile()` — typed user profile with counts
+  - `getUserPosts()` — paginated user posts
+  - `createChannel()` — channel creation
+  - `uploadMedia()` — media upload to IPFS via node
+  - `updateProfile()` — profile editing
+  - `getDmConversations()` — DM conversation list
+  - `getDmMessages()` — DM message history
+  - `getNotifications()` — notification center
+  - `postNews()` — news article posting
+  - `exportAccount()` — full user data export
+  - `getModerationReports()` — moderation reports for a target
+  - `getModerationUser()` — user moderation trust info
+  - `getMediaUrl()` — build media fetch URL by CID
+- Missing spec query parameters:
+  - `listChannels()` — `sort` parameter (recent/popular)
+  - `listNews()` — `tag` filter parameter
+  - `getFeed()` — `before` timestamp parameter
+  - `listNodes()` — `page`/`limit` pagination and `total` in response
+- New response types: `NewsPostResponse`, `ProfileUpdateData`,
+  `DmConversationsResponse`, `DmMessagesResponse`, `NotificationsResponse`,
+  `ChannelCreateData/Response`, `UserProfileResponse`, `UserPostsResponse`,
+  `AccountExportResponse`, `ModerationReportsResponse`, `ModerationUserResponse`
+- Exponential backoff with jitter for WebSocket reconnection
+  (base * 2^attempts, capped at maxReconnectDelay, ±25% jitter)
+- `maxReconnectDelay` option for WsSubscription (default: 30s)
+
+### Changed
+- `getChannel()` now returns typed `{ channel: Channel; member_count; message_count }`
+  instead of `Record<string, unknown>`
+- `putAuthenticated` helper no longer calls `resp.json()` on empty bodies
+  (prevents crash on 204 No Content)
+- Default `reconnectDelay` changed from 3000ms to 1000ms (first retry is faster)
+
+### Removed
+- `getUser()` — replaced by typed `getUserProfile()`
+
+### Fixed
+- `getNotifications(since=0)` no longer skipped due to falsy check
+- `ChannelCreateResponse.channel_id` type changed from `string` to `number`
+  to match `Channel.channel_id`
+
 ## [0.1.0] - 2026-03-29
 
 ### Added

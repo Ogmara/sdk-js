@@ -25,8 +25,10 @@ export interface WsOptions {
   signer?: WalletSigner;
   /** Auto-reconnect on disconnect (default: true). */
   autoReconnect?: boolean;
-  /** Reconnect delay in ms (default: 3000). */
+  /** Initial reconnect delay in ms (default: 1000). */
   reconnectDelay?: number;
+  /** Maximum reconnect delay in ms (default: 30000). */
+  maxReconnectDelay?: number;
 }
 
 /** A handle to an active WebSocket connection. */
@@ -35,6 +37,7 @@ export class WsSubscription {
   private options: WsOptions;
   private closed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
 
   constructor(options: WsOptions) {
     this.options = options;
@@ -74,6 +77,7 @@ export class WsSubscription {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = async () => {
+        this.reconnectAttempts = 0;
         this.options.onStateChange?.(true);
 
         // Send auth message for authenticated WS
@@ -122,7 +126,15 @@ export class WsSubscription {
   private scheduleReconnect(): void {
     if (this.closed || this.options.autoReconnect === false) return;
 
-    const delay = this.options.reconnectDelay ?? 3000;
+    const baseDelay = this.options.reconnectDelay ?? 1000;
+    const maxDelay = this.options.maxReconnectDelay ?? 30000;
+    // Exponential backoff: base * 2^attempts, capped at maxDelay
+    const expDelay = Math.min(baseDelay * Math.pow(2, this.reconnectAttempts), maxDelay);
+    // Add jitter: ±25% to prevent thundering herd
+    const jitter = expDelay * 0.25 * (Math.random() * 2 - 1);
+    const delay = Math.max(0, Math.round(expDelay + jitter));
+    this.reconnectAttempts++;
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();

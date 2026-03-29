@@ -21,6 +21,7 @@ import type { WalletSigner } from './auth';
 import type {
   Health,
   NetworkStats,
+  Channel,
   ChannelsResponse,
   MessagesResponse,
   NewsResponse,
@@ -29,6 +30,19 @@ import type {
   FollowerListResponse,
   FeedResponse,
   PaginationOptions,
+  NewsPostResponse,
+  UploadResult,
+  ProfileUpdateData,
+  DmConversationsResponse,
+  DmMessagesResponse,
+  NotificationsResponse,
+  ChannelCreateData,
+  ChannelCreateResponse,
+  UserProfileResponse,
+  UserPostsResponse,
+  AccountExportResponse,
+  ModerationReportsResponse,
+  ModerationUserResponse,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -67,12 +81,14 @@ export class OgmaraClient {
   }
 
   /** GET /api/v1/channels */
-  async listChannels(page = 1, limit = 20): Promise<ChannelsResponse> {
-    return this.get(`/api/v1/channels?page=${page}&limit=${limit}`);
+  async listChannels(page = 1, limit = 20, sort?: 'recent' | 'popular'): Promise<ChannelsResponse> {
+    let path = `/api/v1/channels?page=${page}&limit=${limit}`;
+    if (sort) path += `&sort=${sort}`;
+    return this.get(path);
   }
 
   /** GET /api/v1/channels/:channelId */
-  async getChannel(channelId: number): Promise<Record<string, unknown>> {
+  async getChannel(channelId: number): Promise<{ channel: Channel; member_count: number; message_count: number }> {
     return this.get(`/api/v1/channels/${channelId}`);
   }
 
@@ -87,19 +103,48 @@ export class OgmaraClient {
     return this.get(path);
   }
 
-  /** GET /api/v1/users/:address */
-  async getUser(address: string): Promise<Record<string, unknown>> {
-    return this.get(`/api/v1/users/${encodeURIComponent(address)}`);
-  }
-
   /** GET /api/v1/news */
-  async listNews(page = 1, limit = 20): Promise<NewsResponse> {
-    return this.get(`/api/v1/news?page=${page}&limit=${limit}`);
+  async listNews(page = 1, limit = 20, tag?: string): Promise<NewsResponse> {
+    let path = `/api/v1/news?page=${page}&limit=${limit}`;
+    if (tag) path += `&tag=${encodeURIComponent(tag)}`;
+    return this.get(path);
   }
 
   /** GET /api/v1/network/nodes */
-  async listNodes(): Promise<{ nodes: NodeInfo[] }> {
-    return this.get('/api/v1/network/nodes');
+  async listNodes(page = 1, limit = 20): Promise<{ nodes: NodeInfo[]; total: number }> {
+    return this.get(`/api/v1/network/nodes?page=${page}&limit=${limit}`);
+  }
+
+  /** GET /api/v1/news/:msgId — single news post with comments. */
+  async getNewsPost(msgId: string): Promise<NewsPostResponse> {
+    return this.get(`/api/v1/news/${encodeURIComponent(msgId)}`);
+  }
+
+  /** GET /api/v1/users/:address — full user profile with counts. */
+  async getUserProfile(address: string): Promise<UserProfileResponse> {
+    return this.get(`/api/v1/users/${encodeURIComponent(address)}`);
+  }
+
+  /** GET /api/v1/users/:address/posts */
+  async getUserPosts(address: string, options?: PaginationOptions): Promise<UserPostsResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    return this.get(`/api/v1/users/${encodeURIComponent(address)}/posts?page=${page}&limit=${limit}`);
+  }
+
+  /** GET /api/v1/moderation/reports — get reports for a target message/user. */
+  async getModerationReports(target: string): Promise<ModerationReportsResponse> {
+    return this.get(`/api/v1/moderation/reports?target=${encodeURIComponent(target)}`);
+  }
+
+  /** GET /api/v1/moderation/user/:address — get moderation trust info for a user. */
+  async getModerationUser(address: string): Promise<ModerationUserResponse> {
+    return this.get(`/api/v1/moderation/user/${encodeURIComponent(address)}`);
+  }
+
+  /** Build the URL for fetching media by IPFS CID (GET /api/v1/media/:cid). */
+  getMediaUrl(cid: string): string {
+    return `${this.nodeUrl}/api/v1/media/${encodeURIComponent(cid)}`;
   }
 
   /** GET /api/v1/users/:address/followers */
@@ -174,15 +219,118 @@ export class OgmaraClient {
   }
 
   /** GET /api/v1/feed — personal news feed (posts from followed users). */
-  async getFeed(options?: PaginationOptions): Promise<FeedResponse> {
+  async getFeed(options?: PaginationOptions & { before?: number }): Promise<FeedResponse> {
     if (!this.signer) throw new Error('Signer required');
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 20;
-    const path = `/api/v1/feed?page=${page}&limit=${limit}`;
+    let path = `/api/v1/feed?page=${page}&limit=${limit}`;
+    if (options?.before !== undefined) path += `&before=${options.before}`;
+    return this.getAuthenticated(path);
+  }
+
+  /** POST /api/v1/channels — create a new channel. */
+  async createChannel(data: ChannelCreateData): Promise<ChannelCreateResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.postAuthenticated('/api/v1/channels', JSON.stringify(data));
+  }
+
+  /** POST /api/v1/media/upload — upload media to IPFS via the node. */
+  async uploadMedia(file: Blob, filename?: string): Promise<UploadResult> {
+    if (!this.signer) throw new Error('Signer required');
+
+    const formData = new FormData();
+    formData.append('file', file, filename);
+
+    const headers = await this.signer.signRequest('POST', '/api/v1/media/upload');
+    const url = `${this.nodeUrl}/api/v1/media/upload`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers }, // no content-type — FormData sets it with boundary
+        body: formData,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+      return resp.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** PUT /api/v1/profile — update the authenticated user's profile. */
+  async updateProfile(data: ProfileUpdateData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.putAuthenticated('/api/v1/profile', JSON.stringify(data));
+  }
+
+  /** GET /api/v1/dm/conversations — list DM conversations. */
+  async getDmConversations(options?: PaginationOptions): Promise<DmConversationsResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    return this.getAuthenticated(`/api/v1/dm/conversations?page=${page}&limit=${limit}`);
+  }
+
+  /** GET /api/v1/dm/:address/messages — retrieve DM messages with a user. */
+  async getDmMessages(address: string, limit = 50, before?: string): Promise<DmMessagesResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    let path = `/api/v1/dm/${encodeURIComponent(address)}/messages?limit=${limit}`;
+    if (before) path += `&before=${encodeURIComponent(before)}`;
+    return this.getAuthenticated(path);
+  }
+
+  /** GET /api/v1/notifications — fetch notifications for the authenticated user. */
+  async getNotifications(since?: number, limit = 50): Promise<NotificationsResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    let path = `/api/v1/notifications?limit=${limit}`;
+    if (since !== undefined) path += `&since=${since}`;
+    return this.getAuthenticated(path);
+  }
+
+  /** POST /api/v1/messages — post a news article. */
+  async postNews(channelId: number, title: string, content: string, tags?: string[]): Promise<{ msg_id: string }> {
+    if (!this.signer) throw new Error('Signer required');
+    const payload = JSON.stringify({
+      channel_id: channelId,
+      title,
+      content,
+      content_rating: 0,
+      tags: tags ?? [],
+      mentions: [],
+      attachments: [],
+    });
+    return this.postAuthenticated('/api/v1/messages', payload);
+  }
+
+  /** GET /api/v1/account/export — export all user data. */
+  async exportAccount(): Promise<AccountExportResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.getAuthenticated('/api/v1/account/export');
+  }
+
+  /** Discover nodes from the current home node for failover. */
+  async discoverNodes(): Promise<void> {
+    const resp = await this.listNodes();
+    this.knownNodes = resp.nodes
+      .map((n) => n.api_endpoint)
+      .filter((url): url is string => !!url && url.length > 0);
+  }
+
+  // --- Internal helpers ---
+
+  private async getAuthenticated<T>(path: string): Promise<T> {
+    if (!this.signer) throw new Error('Signer required');
     const headers = await this.signer.signRequest('GET', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
     try {
       const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal });
       if (!resp.ok) {
@@ -195,15 +343,28 @@ export class OgmaraClient {
     }
   }
 
-  /** Discover nodes from the current home node for failover. */
-  async discoverNodes(): Promise<void> {
-    const resp = await this.listNodes();
-    this.knownNodes = resp.nodes
-      .map((n) => n.api_endpoint)
-      .filter((url): url is string => !!url && url.length > 0);
-  }
+  private async putAuthenticated(path: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('PUT', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
-  // --- Internal helpers ---
+    try {
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
 
   private async get<T>(path: string): Promise<T> {
     const url = `${this.nodeUrl}${path}`;

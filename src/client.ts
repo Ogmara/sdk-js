@@ -26,6 +26,9 @@ import type {
   NewsResponse,
   ClientConfig,
   NodeInfo,
+  FollowerListResponse,
+  FeedResponse,
+  PaginationOptions,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -99,6 +102,20 @@ export class OgmaraClient {
     return this.get('/api/v1/network/nodes');
   }
 
+  /** GET /api/v1/users/:address/followers */
+  async getFollowers(address: string, options?: PaginationOptions): Promise<FollowerListResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 50;
+    return this.get(`/api/v1/users/${encodeURIComponent(address)}/followers?page=${page}&limit=${limit}`);
+  }
+
+  /** GET /api/v1/users/:address/following */
+  async getFollowing(address: string, options?: PaginationOptions): Promise<FollowerListResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 50;
+    return this.get(`/api/v1/users/${encodeURIComponent(address)}/following?page=${page}&limit=${limit}`);
+  }
+
   // --- Authenticated endpoints ---
 
   /** POST /api/v1/messages — send a signed message envelope. */
@@ -122,6 +139,60 @@ export class OgmaraClient {
       `/api/v1/dm/${encodeURIComponent(recipient)}`,
       encryptedPayload,
     );
+  }
+
+  /** POST /api/v1/users/:address/follow — follow a user. */
+  async follow(target: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(
+      `/api/v1/users/${encodeURIComponent(target)}/follow`,
+      JSON.stringify({ target }),
+    );
+  }
+
+  /** DELETE /api/v1/users/:address/follow — unfollow a user. */
+  async unfollow(target: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('DELETE', `/api/v1/users/${encodeURIComponent(target)}/follow`);
+    const url = `${this.nodeUrl}/api/v1/users/${encodeURIComponent(target)}/follow`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body: JSON.stringify({ target }),
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** GET /api/v1/feed — personal news feed (posts from followed users). */
+  async getFeed(options?: PaginationOptions): Promise<FeedResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    const path = `/api/v1/feed?page=${page}&limit=${limit}`;
+    const headers = await this.signer.signRequest('GET', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+      return resp.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /** Discover nodes from the current home node for failover. */

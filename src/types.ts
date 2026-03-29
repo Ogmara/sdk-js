@@ -173,5 +173,38 @@ export const MessageType = {
   Report: 0x40,
   CounterVote: 0x41,
   ChannelMute: 0x42,
+  Follow: 0x34,
+  Unfollow: 0x35,
   DeletionRequest: 0x50,
 } as const;
+
+/** Follow payload. */
+export interface FollowPayload {
+  target: string;
+}
+
+/** Unfollow payload. */
+export interface UnfollowPayload {
+  target: string;
+}
+
+/** Follower/following list response. */
+export interface FollowerListResponse {
+  followers?: string[];
+  following?: string[];
+  total: number;
+  page: number;
+}
+
+/** Personal feed response. */
+export interface FeedResponse {
+  posts: Envelope[];
+  total: number;
+  page: number;
+}
+
+/** Pagination options. */
+export interface PaginationOptions {
+  page?: number;
+  limit?: number;
+}

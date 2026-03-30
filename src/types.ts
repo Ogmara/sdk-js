@@ -176,6 +176,18 @@ export const MessageType = {
   Follow: 0x34,
   Unfollow: 0x35,
   DeletionRequest: 0x50,
+  // Channel Administration
+  ChannelAddModerator: 0x14,
+  ChannelRemoveModerator: 0x15,
+  ChannelKick: 0x16,
+  ChannelBan: 0x17,
+  ChannelUnban: 0x18,
+  ChannelPinMessage: 0x19,
+  ChannelUnpinMessage: 0x1a,
+  ChannelInvite: 0x1b,
+  // News Engagement
+  NewsReaction: 0x24,
+  NewsRepost: 0x25,
 } as const;
 
 /** Follow payload. */
@@ -302,4 +314,100 @@ export interface AccountExportResponse {
   posts: Envelope[];
   dms: Envelope[];
   channels: number[];
+}
+
+// --- News Engagement types ---
+
+/** Reaction info for a specific emoji. */
+export interface ReactionInfo {
+  count: number;
+  user_reacted?: boolean;
+}
+
+/** News reactions response. */
+export interface NewsReactionsResponse {
+  reactions: Record<string, ReactionInfo>;
+}
+
+/** Reaction payload for sending. */
+export interface ReactionPayload {
+  target_id: string;
+  channel_id?: number;
+  emoji: string;
+  remove: boolean;
+}
+
+/** News repost payload for sending. */
+export interface NewsRepostPayload {
+  original_id: string;
+  original_author: string;
+  comment?: string;
+}
+
+/** Reposts list response. */
+export interface RepostsResponse {
+  reposters: string[];
+  total: number;
+}
+
+/** Bookmarks list response. */
+export interface BookmarksResponse {
+  bookmarks: Envelope[];
+  total: number;
+}
+
+// --- Channel Administration types ---
+
+/** Moderator permissions. */
+export interface ModeratorPermissions {
+  can_mute: boolean;
+  can_kick: boolean;
+  can_ban: boolean;
+  can_pin: boolean;
+  can_edit_info: boolean;
+  can_delete_msgs: boolean;
+}
+
+/** Channel member info. */
+export interface ChannelMember {
+  address: string;
+  role: 'creator' | 'moderator' | 'member';
+  joined_at: number;
+  permissions?: ModeratorPermissions;
+}
+
+/** Channel members response. */
+export interface ChannelMembersResponse {
+  members: ChannelMember[];
+  total: number;
+}
+
+/** Channel pins response. */
+export interface ChannelPinsResponse {
+  pinned_messages: Envelope[];
+}
+
+/** Channel bans response. */
+export interface ChannelBansResponse {
+  bans: {
+    address: string;
+    reason?: string;
+    duration_secs?: number;
+    banned_at?: number;
+    banned_by?: string;
+  }[];
+}
+
+/** Extended channel detail response (with admin data). */
+export interface ChannelDetailResponse {
+  channel: Channel & {
+    logo_cid?: string;
+    banner_cid?: string;
+    website_url?: string;
+    tags?: string[];
+    moderator_count?: number;
+  };
+  moderators?: string[];
+  pinned_messages?: Envelope[];
+  message_count?: number;
 }

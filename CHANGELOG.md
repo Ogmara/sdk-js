@@ -5,6 +5,29 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-30
+
+### Added
+- **Message Formatting & URL Detection**
+  - `parseMessageContent()` — parses text into segments with URLs, bold, italic, underline, code, strikethrough
+  - `applyFormatting()` — wraps selected text range with Markdown markers for compose inputs
+  - `TextSegment` type for rendering parsed content
+- **Node Discovery & Selection**
+  - `pingNode()` — measure latency to any node URL
+  - `discoverAndPingNodes()` — discover all nodes, ping in parallel, return sorted by latency
+  - `NodeWithPing` type for node selection UI
+  - `DEFAULT_NODE_URL` constant (`https://node.ogmara.org`)
+
+## [0.3.0] - 2026-03-30
+
+### Added
+- 10 new MessageType entries: channel admin (0x14-0x1B) and news engagement (0x24-0x25)
+- News engagement methods: reactToNews(), repostNews(), getNewsReactions(), getNewsReposts()
+- Bookmark methods: listBookmarks(), saveBookmark(), removeBookmark()
+- Channel admin methods: addModerator(), removeModerator(), kickUser(), banUser(), unbanUser(), pinMessage(), unpinMessage(), inviteUser()
+- Channel query methods: getChannelDetail(), getChannelMembers(), getChannelPins(), getChannelBans()
+- New types: ReactionInfo, NewsReactionsResponse, ReactionPayload, NewsRepostPayload, RepostsResponse, BookmarksResponse, ModeratorPermissions, ChannelMember, ChannelMembersResponse, ChannelPinsResponse, ChannelBansResponse, ChannelDetailResponse
+
 ## [0.2.0] - 2026-03-29
 
 ### Added

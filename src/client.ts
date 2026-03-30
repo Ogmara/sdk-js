@@ -43,6 +43,13 @@ import type {
   AccountExportResponse,
   ModerationReportsResponse,
   ModerationUserResponse,
+  NewsReactionsResponse,
+  RepostsResponse,
+  BookmarksResponse,
+  ChannelMembersResponse,
+  ChannelPinsResponse,
+  ChannelBansResponse,
+  ChannelDetailResponse,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -159,6 +166,44 @@ export class OgmaraClient {
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 50;
     return this.get(`/api/v1/users/${encodeURIComponent(address)}/following?page=${page}&limit=${limit}`);
+  }
+
+  // --- News Engagement (public) ---
+
+  /** GET /api/v1/news/:msgId/reactions */
+  async getNewsReactions(msgId: string): Promise<NewsReactionsResponse> {
+    return this.get(`/api/v1/news/${encodeURIComponent(msgId)}/reactions`);
+  }
+
+  /** GET /api/v1/news/:msgId/reposts */
+  async getNewsReposts(msgId: string, options?: PaginationOptions): Promise<RepostsResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    return this.get(`/api/v1/news/${encodeURIComponent(msgId)}/reposts?page=${page}&limit=${limit}`);
+  }
+
+  // --- Channel Administration (public) ---
+
+  /** GET /api/v1/channels/:channelId (extended with admin data) */
+  async getChannelDetail(channelId: number): Promise<ChannelDetailResponse> {
+    return this.get(`/api/v1/channels/${channelId}`);
+  }
+
+  /** GET /api/v1/channels/:channelId/members */
+  async getChannelMembers(channelId: number, options?: PaginationOptions): Promise<ChannelMembersResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 50;
+    return this.get(`/api/v1/channels/${channelId}/members?page=${page}&limit=${limit}`);
+  }
+
+  /** GET /api/v1/channels/:channelId/pins */
+  async getChannelPins(channelId: number): Promise<ChannelPinsResponse> {
+    return this.get(`/api/v1/channels/${channelId}/pins`);
+  }
+
+  /** GET /api/v1/channels/:channelId/bans */
+  async getChannelBans(channelId: number): Promise<ChannelBansResponse> {
+    return this.get(`/api/v1/channels/${channelId}/bans`);
   }
 
   // --- Authenticated endpoints ---
@@ -312,6 +357,168 @@ export class OgmaraClient {
   async exportAccount(): Promise<AccountExportResponse> {
     if (!this.signer) throw new Error('Signer required');
     return this.getAuthenticated('/api/v1/account/export');
+  }
+
+  // --- News Engagement (authenticated) ---
+
+  /** POST /api/v1/news/:msgId/react — react to a news post. */
+  async reactToNews(msgId: string, emoji: string, remove = false): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(
+      `/api/v1/news/${encodeURIComponent(msgId)}/react`,
+      JSON.stringify({ target_id: msgId, emoji, remove }),
+    );
+  }
+
+  /** POST /api/v1/news/:msgId/repost — repost a news post. */
+  async repostNews(msgId: string, originalAuthor: string, comment?: string): Promise<{ msg_id: string }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.postAuthenticated(
+      `/api/v1/news/${encodeURIComponent(msgId)}/repost`,
+      JSON.stringify({ original_id: msgId, original_author: originalAuthor, comment }),
+    );
+  }
+
+  // --- Bookmarks (authenticated) ---
+
+  /** GET /api/v1/bookmarks — list saved posts. */
+  async listBookmarks(options?: PaginationOptions): Promise<BookmarksResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 20;
+    return this.getAuthenticated(`/api/v1/bookmarks?page=${page}&limit=${limit}`);
+  }
+
+  /** POST /api/v1/bookmarks/:msgId — save a post. */
+  async saveBookmark(msgId: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/bookmarks/${encodeURIComponent(msgId)}`, '');
+  }
+
+  /** DELETE /api/v1/bookmarks/:msgId — unsave a post. */
+  async removeBookmark(msgId: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('DELETE', `/api/v1/bookmarks/${encodeURIComponent(msgId)}`);
+    const url = `${this.nodeUrl}/api/v1/bookmarks/${encodeURIComponent(msgId)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers },
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  // --- Channel Administration (authenticated) ---
+
+  /** POST /api/v1/channels/:channelId/moderators — add moderator. */
+  async addModerator(channelId: number, targetUser: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/channels/${channelId}/moderators`, body);
+  }
+
+  /** DELETE /api/v1/channels/:channelId/moderators/:address — remove moderator. */
+  async removeModerator(channelId: number, address: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const path = `/api/v1/channels/${channelId}/moderators/${encodeURIComponent(address)}`;
+    const headers = await this.signer.signRequest('DELETE', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** POST /api/v1/channels/:channelId/kick/:address — kick user. */
+  async kickUser(channelId: number, address: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/channels/${channelId}/kick/${encodeURIComponent(address)}`, body);
+  }
+
+  /** POST /api/v1/channels/:channelId/ban/:address — ban user. */
+  async banUser(channelId: number, address: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`, body);
+  }
+
+  /** DELETE /api/v1/channels/:channelId/ban/:address — unban user. */
+  async unbanUser(channelId: number, address: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const path = `/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`;
+    const headers = await this.signer.signRequest('DELETE', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** POST /api/v1/channels/:channelId/pin/:msgId — pin message. */
+  async pinMessage(channelId: number, msgId: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`, body);
+  }
+
+  /** DELETE /api/v1/channels/:channelId/pin/:msgId — unpin message. */
+  async unpinMessage(channelId: number, msgId: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const path = `/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`;
+    const headers = await this.signer.signRequest('DELETE', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** POST /api/v1/channels/:channelId/invite/:address — invite user to private channel. */
+  async inviteUser(channelId: number, address: string, body: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postAuthenticated(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, body);
   }
 
   /** Discover nodes from the current home node for failover. */

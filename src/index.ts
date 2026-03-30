@@ -31,4 +31,13 @@ export type { ExternalSigner, AuthHeaders } from './auth';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';
 export * from './types';
-export { extractHashtags } from './utils';
+export {
+  extractHashtags,
+  parseMessageContent,
+  applyFormatting,
+  pingNode,
+  discoverAndPingNodes,
+  validateNodeUrl,
+  DEFAULT_NODE_URL,
+} from './utils';
+export type { TextSegment, NodeWithPing } from './utils';

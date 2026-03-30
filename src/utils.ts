@@ -4,6 +4,8 @@
  * Text formatting, URL detection, hashtag extraction.
  */
 
+import type { AnchorStatus } from './types';
+
 /** Default production node. */
 export const DEFAULT_NODE_URL = 'https://node.ogmara.org';
 
@@ -249,6 +251,7 @@ export interface NodeWithPing {
   ping: number; // ms, Infinity if unreachable
   nodeId?: string;
   peers?: number;
+  anchorStatus?: AnchorStatus;
 }
 
 /**
@@ -272,7 +275,7 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
     clearTimeout(timeoutId);
     if (resp.ok) {
       const data = await resp.json();
-      const nodes: { api_endpoint?: string; node_id?: string }[] = data.nodes ?? [];
+      const nodes: { api_endpoint?: string; node_id?: string; anchor_status?: AnchorStatus }[] = data.nodes ?? [];
       // Ping discovered nodes in parallel (max 10)
       const candidates = nodes
         .filter((n) => n.api_endpoint && n.api_endpoint !== primaryUrl && validateNodeUrl(n.api_endpoint))
@@ -280,7 +283,7 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
       const pings = await Promise.all(
         candidates.map(async (n) => {
           const p = await pingNode(n.api_endpoint!);
-          return { url: n.api_endpoint!, ping: p, nodeId: n.node_id };
+          return { url: n.api_endpoint!, ping: p, nodeId: n.node_id, anchorStatus: n.anchor_status };
         }),
       );
       results.push(...pings);
@@ -289,8 +292,23 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
     // Discovery failed — just use the primary
   }
 
-  // Sort by ping (best first), filter out unreachable
+  // Sort: online first (filtered), then latency (primary), anchor level (tiebreaker)
+  const anchorRank = (n: NodeWithPing): number => {
+    if (!n.anchorStatus) return 2;
+    if (n.anchorStatus.level === 'active') return 0;
+    if (n.anchorStatus.level === 'verified') return 1;
+    return 2;
+  };
+
   return results
     .filter((n) => n.ping < Infinity)
-    .sort((a, b) => a.ping - b.ping);
+    .sort((a, b) => {
+      // Primary sort: latency
+      const pingDiff = a.ping - b.ping;
+      // Within same latency tier (50ms tolerance), prefer verified nodes
+      if (Math.abs(pingDiff) > 50) return pingDiff;
+      const rankDiff = anchorRank(a) - anchorRank(b);
+      if (rankDiff !== 0) return rankDiff;
+      return pingDiff;
+    });
 }

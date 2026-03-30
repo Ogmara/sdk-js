@@ -5,6 +5,16 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-30
+
+### Added
+
+- `AnchorStatus` interface — anchor verification level for network nodes
+- `SelfAnchorStatus` interface — self-reported anchor status from `/network/stats`
+- `anchor_status` field on `NodeInfo` and `NetworkStats` interfaces
+- `anchorStatus` field on `NodeWithPing` — propagated from node discovery
+- Failover sort now prefers verified/active anchoring nodes (same latency tier)
+
 ## [0.4.0] - 2026-03-30
 
 ### Added

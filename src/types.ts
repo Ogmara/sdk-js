@@ -85,6 +85,23 @@ export interface Health {
   peers: number;
 }
 
+/** Anchor verification status for a network node. */
+export interface AnchorStatus {
+  verified: boolean;
+  level: 'active' | 'verified' | 'none';
+  last_anchor_age_seconds?: number;
+  anchoring_since?: number;
+}
+
+/** Self anchor status reported by a node in /network/stats. */
+export interface SelfAnchorStatus {
+  is_anchorer: boolean;
+  last_anchor_height?: number;
+  last_anchor_age_seconds?: number;
+  total_anchors: number;
+  anchoring_since?: number;
+}
+
 /** Network stats response. */
 export interface NetworkStats {
   node_id: string;
@@ -94,6 +111,7 @@ export interface NetworkStats {
   total_users: number;
   uptime_seconds: number;
   protocol_version: number;
+  anchor_status?: SelfAnchorStatus;
 }
 
 /** Channels list response. */
@@ -130,6 +148,7 @@ export interface NodeInfo {
   channels?: number[];
   user_count?: number;
   last_seen?: number;
+  anchor_status?: AnchorStatus;
 }
 
 /** WebSocket event types from the server. */

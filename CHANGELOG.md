@@ -5,6 +5,35 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-31
+
+### Added
+- **Envelope builder** (`envelope.ts`) — constructs signed MessagePack-serialized
+  envelopes per protocol spec 3.1. Builds proper Envelope with version, msg_type,
+  msg_id (Keccak-256), Ed25519 signature, and MessagePack-serialized payload.
+- `@msgpack/msgpack` dependency for MessagePack serialization
+- High-level builders: `buildChatMessage`, `buildNewsPost`, `buildProfileUpdate`,
+  `buildFollow`, `buildUnfollow`, `buildReaction`, `buildRepost`, and all
+  channel admin builders (kick, ban, pin, invite, etc.)
+- `postEnvelope`, `putEnvelope`, `deleteEnvelope` internal helpers for binary body
+- `postNews` now accepts optional `attachments` array for media
+
+### Changed
+- **BREAKING**: All write methods now send MessagePack-serialized Envelope bytes
+  instead of JSON strings. This matches what the L2 node actually expects.
+- `postNews(title, content, options?)` — removed `channelId` parameter (news posts
+  are not channel-scoped per protocol spec)
+- `sendMessage(channelId, content, options?)` — added optional `replyTo`,
+  `mentions`, `attachments` parameters
+- `createChannel` now accepts pre-built envelope bytes
+- `addModerator`, `kickUser`, `banUser`, `pinMessage`, `unpinMessage`, `inviteUser`
+  now accept typed parameters instead of raw JSON body strings
+- `sendDm` now accepts `Uint8Array` envelope bytes instead of JSON string
+
+### Fixed
+- "deserialization failed: expected struct Envelope" error — root cause was SDK
+  sending JSON while L2 node expected MessagePack binary
+
 ## [0.5.1] - 2026-03-31
 
 ### Fixed

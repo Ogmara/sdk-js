@@ -23,6 +23,7 @@ import {
   type ProfileUpdateData,
   type ReactionPayload,
   type NewsRepostPayload,
+  type NewsCommentData,
 } from './types';
 
 /**
@@ -119,6 +120,16 @@ function newsPostPayload(data: NewsPostData): Record<string, unknown> {
     tags: data.tags ?? [],
     attachments: (data.attachments ?? []).map(serializeAttachment),
     visibility: VISIBILITY_PUBLIC,
+  };
+}
+
+function newsCommentPayload(data: NewsCommentData): Record<string, unknown> {
+  return {
+    post_id: hexToBytes(data.postId),
+    content: data.content,
+    reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
+    mentions: data.mentions ?? [],
+    attachments: (data.attachments ?? []).map(serializeAttachment),
   };
 }
 
@@ -279,6 +290,10 @@ export async function buildChatMessage(signer: WalletSigner, data: ChatMessageDa
 
 export async function buildNewsPost(signer: WalletSigner, data: NewsPostData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.NewsPost, newsPostPayload(data));
+}
+
+export async function buildNewsComment(signer: WalletSigner, data: NewsCommentData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.NewsComment, newsCommentPayload(data));
 }
 
 export async function buildProfileUpdate(signer: WalletSigner, data: ProfileUpdateData): Promise<Uint8Array> {

@@ -21,6 +21,7 @@ import type { WalletSigner } from './auth';
 import {
   buildChatMessage,
   buildNewsPost,
+  buildNewsComment,
   buildProfileUpdate,
   buildFollow,
   buildUnfollow,
@@ -39,6 +40,7 @@ import type {
   Health,
   NetworkStats,
   Channel,
+  NewsCommentData,
   ChannelsResponse,
   MessagesResponse,
   NewsResponse,
@@ -363,6 +365,24 @@ export class OgmaraClient {
       attachments: options?.attachments,
     };
     const envelope = await buildNewsPost(this.signer, data);
+    return this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — post a comment on a news article (signed envelope). */
+  async postComment(
+    postId: string,
+    content: string,
+    options?: { replyTo?: string; mentions?: string[]; attachments?: Attachment[] },
+  ): Promise<{ msg_id: string }> {
+    if (!this.signer) throw new Error('Signer required');
+    const data: NewsCommentData = {
+      postId,
+      content,
+      replyTo: options?.replyTo,
+      mentions: options?.mentions,
+      attachments: options?.attachments,
+    };
+    const envelope = await buildNewsComment(this.signer, data);
     return this.postEnvelope('/api/v1/messages', envelope);
   }
 

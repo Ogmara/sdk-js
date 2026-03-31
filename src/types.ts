@@ -70,6 +70,15 @@ export interface NewsPostData {
   attachments?: Attachment[];
 }
 
+/** News comment data for sending (reply to a news post). */
+export interface NewsCommentData {
+  postId: string;       // hex msg_id of parent NewsPost
+  content: string;
+  replyTo?: string;     // hex msg_id of parent comment (for threading)
+  mentions?: string[];
+  attachments?: Attachment[];
+}
+
 /** DM conversation summary. */
 export interface DmConversation {
   conversation_id: string;

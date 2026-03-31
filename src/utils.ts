@@ -226,7 +226,10 @@ export function validateNodeUrl(url: string): string | null {
   }
 }
 
-/** Measure ping to a node URL (ms). Returns Infinity on failure. */
+/** Measure ping to a node URL (ms). Returns Infinity on failure.
+ *  Validates the response is an actual L2 node health endpoint
+ *  (must return JSON with `version` field) to avoid false positives
+ *  from web servers that return 200 on any path. */
 export async function pingNode(nodeUrl: string, timeout = 5000): Promise<number> {
   const validated = validateNodeUrl(nodeUrl);
   if (!validated) return Infinity;
@@ -237,6 +240,9 @@ export async function pingNode(nodeUrl: string, timeout = 5000): Promise<number>
   try {
     const resp = await fetch(`${validated}/api/v1/health`, { signal: controller.signal });
     if (!resp.ok) return Infinity;
+    // Validate this is actually an L2 node, not a random web server
+    const body = await resp.json();
+    if (!body || typeof body.version !== 'string') return Infinity;
     return Date.now() - start;
   } catch {
     return Infinity;
@@ -300,15 +306,17 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
     return 2;
   };
 
-  return results
-    .filter((n) => n.ping < Infinity)
-    .sort((a, b) => {
-      // Primary sort: latency
-      const pingDiff = a.ping - b.ping;
-      // Within same latency tier (50ms tolerance), prefer verified nodes
-      if (Math.abs(pingDiff) > 50) return pingDiff;
-      const rankDiff = anchorRank(a) - anchorRank(b);
-      if (rankDiff !== 0) return rankDiff;
-      return pingDiff;
-    });
+  return results.sort((a, b) => {
+    // Unreachable nodes go to the bottom
+    if (a.ping === Infinity && b.ping !== Infinity) return 1;
+    if (a.ping !== Infinity && b.ping === Infinity) return -1;
+    if (a.ping === Infinity && b.ping === Infinity) return 0;
+    // Primary sort: latency
+    const pingDiff = a.ping - b.ping;
+    // Within same latency tier (50ms tolerance), prefer verified nodes
+    if (Math.abs(pingDiff) > 50) return pingDiff;
+    const rankDiff = anchorRank(a) - anchorRank(b);
+    if (rankDiff !== 0) return rankDiff;
+    return pingDiff;
+  });
 }

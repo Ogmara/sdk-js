@@ -6,8 +6,8 @@
 
 import type { AnchorStatus } from './types';
 
-/** Default production node. */
-export const DEFAULT_NODE_URL = 'https://node.ogmara.org';
+/** Default production node (path-based routing on ogmara.org). */
+export const DEFAULT_NODE_URL = 'https://ogmara.org';
 
 /**
  * Extract hashtags from text content.

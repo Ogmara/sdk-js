@@ -5,6 +5,14 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-31
+
+### Fixed
+- `pingNode` now validates response body (must have `version` field) —
+  prevents false positives from web servers that return 200 on any path
+- `discoverAndPingNodes` no longer filters out unreachable nodes — they
+  are sorted to the bottom so the UI can show them as offline
+
 ## [0.5.0] - 2026-03-30
 
 ### Added

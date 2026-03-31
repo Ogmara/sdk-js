@@ -18,6 +18,23 @@
  */
 
 import type { WalletSigner } from './auth';
+import {
+  buildChatMessage,
+  buildNewsPost,
+  buildProfileUpdate,
+  buildFollow,
+  buildUnfollow,
+  buildReaction,
+  buildRepost,
+  buildAddModerator,
+  buildRemoveModerator,
+  buildKick,
+  buildBan,
+  buildUnban,
+  buildPin,
+  buildUnpin,
+  buildInvite,
+} from './envelope';
 import type {
   Health,
   NetworkStats,
@@ -33,10 +50,12 @@ import type {
   NewsPostResponse,
   UploadResult,
   ProfileUpdateData,
+  ChatMessageData,
+  NewsPostData,
+  Attachment,
   DmConversationsResponse,
   DmMessagesResponse,
   NotificationsResponse,
-  ChannelCreateData,
   ChannelCreateResponse,
   UserProfileResponse,
   UserPostsResponse,
@@ -50,6 +69,7 @@ import type {
   ChannelPinsResponse,
   ChannelBansResponse,
   ChannelDetailResponse,
+  ModeratorPermissions,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -208,59 +228,47 @@ export class OgmaraClient {
 
   // --- Authenticated endpoints ---
 
-  /** POST /api/v1/messages — send a signed message envelope. */
-  async sendMessage(channelId: number, content: string): Promise<{ msg_id: string }> {
+  /** POST /api/v1/messages — send a signed chat message envelope. */
+  async sendMessage(
+    channelId: number,
+    content: string,
+    options?: { replyTo?: string; mentions?: string[]; attachments?: Attachment[] },
+  ): Promise<{ msg_id: string }> {
     if (!this.signer) throw new Error('Signer required for authenticated endpoints');
-    // Build and sign the envelope
-    const payload = JSON.stringify({
-      channel_id: channelId,
+    const data: ChatMessageData = {
+      channelId,
       content,
-      content_rating: 0,
-      mentions: [],
-      attachments: [],
-    });
-    return this.postAuthenticated('/api/v1/messages', payload);
+      replyTo: options?.replyTo,
+      mentions: options?.mentions,
+      attachments: options?.attachments,
+    };
+    const envelope = await buildChatMessage(this.signer, data);
+    return this.postEnvelope('/api/v1/messages', envelope);
   }
 
-  /** POST /api/v1/dm/:address — send an encrypted DM. */
-  async sendDm(recipient: string, encryptedPayload: string): Promise<{ msg_id: string }> {
+  /** POST /api/v1/dm/:address — send an encrypted DM.
+   *  Note: DM encryption is handled by the caller. The encryptedPayload
+   *  is the pre-built envelope bytes (MessagePack). */
+  async sendDm(recipient: string, envelopeBytes: Uint8Array): Promise<{ msg_id: string }> {
     if (!this.signer) throw new Error('Signer required for authenticated endpoints');
-    return this.postAuthenticated(
+    return this.postEnvelope(
       `/api/v1/dm/${encodeURIComponent(recipient)}`,
-      encryptedPayload,
+      envelopeBytes,
     );
   }
 
   /** POST /api/v1/users/:address/follow — follow a user. */
   async follow(target: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(
-      `/api/v1/users/${encodeURIComponent(target)}/follow`,
-      JSON.stringify({ target }),
-    );
+    const envelope = await buildFollow(this.signer, target);
+    await this.postEnvelope(`/api/v1/users/${encodeURIComponent(target)}/follow`, envelope);
   }
 
   /** DELETE /api/v1/users/:address/follow — unfollow a user. */
   async unfollow(target: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('DELETE', `/api/v1/users/${encodeURIComponent(target)}/follow`);
-    const url = `${this.nodeUrl}/api/v1/users/${encodeURIComponent(target)}/follow`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    try {
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { ...headers, 'content-type': 'application/octet-stream' },
-        body: JSON.stringify({ target }),
-        signal: controller.signal,
-      });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const envelope = await buildUnfollow(this.signer, target);
+    await this.deleteEnvelope(`/api/v1/users/${encodeURIComponent(target)}/follow`, envelope);
   }
 
   /** GET /api/v1/feed — personal news feed (posts from followed users). */
@@ -273,10 +281,12 @@ export class OgmaraClient {
     return this.getAuthenticated(path);
   }
 
-  /** POST /api/v1/channels — create a new channel. */
-  async createChannel(data: ChannelCreateData): Promise<ChannelCreateResponse> {
+  /** POST /api/v1/channels — create a new channel.
+   *  Note: Channel creation requires an on-chain SC call first to get the channel_id.
+   *  The envelope is built by the caller with the assigned channel_id. */
+  async createChannel(envelopeBytes: Uint8Array): Promise<ChannelCreateResponse> {
     if (!this.signer) throw new Error('Signer required');
-    return this.postAuthenticated('/api/v1/channels', JSON.stringify(data));
+    return this.postEnvelope('/api/v1/channels', envelopeBytes);
   }
 
   /** POST /api/v1/media/upload — upload media to IPFS via the node. */
@@ -300,7 +310,7 @@ export class OgmaraClient {
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
       return resp.json();
     } finally {
@@ -311,7 +321,8 @@ export class OgmaraClient {
   /** PUT /api/v1/profile — update the authenticated user's profile. */
   async updateProfile(data: ProfileUpdateData): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.putAuthenticated('/api/v1/profile', JSON.stringify(data));
+    const envelope = await buildProfileUpdate(this.signer, data);
+    await this.putEnvelope('/api/v1/profile', envelope);
   }
 
   /** GET /api/v1/dm/conversations — list DM conversations. */
@@ -338,19 +349,21 @@ export class OgmaraClient {
     return this.getAuthenticated(path);
   }
 
-  /** POST /api/v1/messages — post a news article. */
-  async postNews(channelId: number, title: string, content: string, tags?: string[]): Promise<{ msg_id: string }> {
+  /** POST /api/v1/messages — post a news article (signed envelope). */
+  async postNews(
+    title: string,
+    content: string,
+    options?: { tags?: string[]; attachments?: Attachment[] },
+  ): Promise<{ msg_id: string }> {
     if (!this.signer) throw new Error('Signer required');
-    const payload = JSON.stringify({
-      channel_id: channelId,
+    const data: NewsPostData = {
       title,
       content,
-      content_rating: 0,
-      tags: tags ?? [],
-      mentions: [],
-      attachments: [],
-    });
-    return this.postAuthenticated('/api/v1/messages', payload);
+      tags: options?.tags,
+      attachments: options?.attachments,
+    };
+    const envelope = await buildNewsPost(this.signer, data);
+    return this.postEnvelope('/api/v1/messages', envelope);
   }
 
   /** GET /api/v1/account/export — export all user data. */
@@ -364,19 +377,15 @@ export class OgmaraClient {
   /** POST /api/v1/news/:msgId/react — react to a news post. */
   async reactToNews(msgId: string, emoji: string, remove = false): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(
-      `/api/v1/news/${encodeURIComponent(msgId)}/react`,
-      JSON.stringify({ target_id: msgId, emoji, remove }),
-    );
+    const envelope = await buildReaction(this.signer, { target_id: msgId, emoji, remove });
+    await this.postEnvelope(`/api/v1/news/${encodeURIComponent(msgId)}/react`, envelope);
   }
 
   /** POST /api/v1/news/:msgId/repost — repost a news post. */
   async repostNews(msgId: string, originalAuthor: string, comment?: string): Promise<{ msg_id: string }> {
     if (!this.signer) throw new Error('Signer required');
-    return this.postAuthenticated(
-      `/api/v1/news/${encodeURIComponent(msgId)}/repost`,
-      JSON.stringify({ original_id: msgId, original_author: originalAuthor, comment }),
-    );
+    const envelope = await buildRepost(this.signer, { original_id: msgId, original_author: originalAuthor, comment });
+    return this.postEnvelope(`/api/v1/news/${encodeURIComponent(msgId)}/repost`, envelope);
   }
 
   // --- Bookmarks (authenticated) ---
@@ -389,10 +398,27 @@ export class OgmaraClient {
     return this.getAuthenticated(`/api/v1/bookmarks?page=${page}&limit=${limit}`);
   }
 
-  /** POST /api/v1/bookmarks/:msgId — save a post. */
+  /** POST /api/v1/bookmarks/:msgId — save a post (no envelope needed). */
   async saveBookmark(msgId: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/bookmarks/${encodeURIComponent(msgId)}`, '');
+    const path = `/api/v1/bookmarks/${encodeURIComponent(msgId)}`;
+    const headers = await this.signer.signRequest('POST', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers },
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /** DELETE /api/v1/bookmarks/:msgId — unsave a post. */
@@ -410,7 +436,7 @@ export class OgmaraClient {
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
     } finally {
       clearTimeout(timeoutId);
@@ -420,105 +446,59 @@ export class OgmaraClient {
   // --- Channel Administration (authenticated) ---
 
   /** POST /api/v1/channels/:channelId/moderators — add moderator. */
-  async addModerator(channelId: number, targetUser: string, body: string): Promise<void> {
+  async addModerator(channelId: number, targetUser: string, permissions: ModeratorPermissions): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/channels/${channelId}/moderators`, body);
+    const envelope = await buildAddModerator(this.signer, { channelId, targetUser, permissions });
+    await this.postEnvelope(`/api/v1/channels/${channelId}/moderators`, envelope);
   }
 
   /** DELETE /api/v1/channels/:channelId/moderators/:address — remove moderator. */
-  async removeModerator(channelId: number, address: string, body: string): Promise<void> {
+  async removeModerator(channelId: number, address: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const path = `/api/v1/channels/${channelId}/moderators/${encodeURIComponent(address)}`;
-    const headers = await this.signer.signRequest('DELETE', path);
-    const url = `${this.nodeUrl}${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    try {
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { ...headers, 'content-type': 'application/octet-stream' },
-        body,
-        signal: controller.signal,
-      });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const envelope = await buildRemoveModerator(this.signer, channelId, address);
+    await this.deleteEnvelope(`/api/v1/channels/${channelId}/moderators/${encodeURIComponent(address)}`, envelope);
   }
 
   /** POST /api/v1/channels/:channelId/kick/:address — kick user. */
-  async kickUser(channelId: number, address: string, body: string): Promise<void> {
+  async kickUser(channelId: number, address: string, reason?: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/channels/${channelId}/kick/${encodeURIComponent(address)}`, body);
+    const envelope = await buildKick(this.signer, channelId, address, reason);
+    await this.postEnvelope(`/api/v1/channels/${channelId}/kick/${encodeURIComponent(address)}`, envelope);
   }
 
   /** POST /api/v1/channels/:channelId/ban/:address — ban user. */
-  async banUser(channelId: number, address: string, body: string): Promise<void> {
+  async banUser(channelId: number, address: string, reason?: string, durationSecs?: number): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`, body);
+    const envelope = await buildBan(this.signer, channelId, address, reason, durationSecs);
+    await this.postEnvelope(`/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`, envelope);
   }
 
   /** DELETE /api/v1/channels/:channelId/ban/:address — unban user. */
-  async unbanUser(channelId: number, address: string, body: string): Promise<void> {
+  async unbanUser(channelId: number, address: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const path = `/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`;
-    const headers = await this.signer.signRequest('DELETE', path);
-    const url = `${this.nodeUrl}${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    try {
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { ...headers, 'content-type': 'application/octet-stream' },
-        body,
-        signal: controller.signal,
-      });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const envelope = await buildUnban(this.signer, channelId, address);
+    await this.deleteEnvelope(`/api/v1/channels/${channelId}/ban/${encodeURIComponent(address)}`, envelope);
   }
 
   /** POST /api/v1/channels/:channelId/pin/:msgId — pin message. */
-  async pinMessage(channelId: number, msgId: string, body: string): Promise<void> {
+  async pinMessage(channelId: number, msgId: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`, body);
+    const envelope = await buildPin(this.signer, channelId, msgId);
+    await this.postEnvelope(`/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`, envelope);
   }
 
   /** DELETE /api/v1/channels/:channelId/pin/:msgId — unpin message. */
-  async unpinMessage(channelId: number, msgId: string, body: string): Promise<void> {
+  async unpinMessage(channelId: number, msgId: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const path = `/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`;
-    const headers = await this.signer.signRequest('DELETE', path);
-    const url = `${this.nodeUrl}${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-    try {
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { ...headers, 'content-type': 'application/octet-stream' },
-        body,
-        signal: controller.signal,
-      });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
-      }
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const envelope = await buildUnpin(this.signer, channelId, msgId);
+    await this.deleteEnvelope(`/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`, envelope);
   }
 
   /** POST /api/v1/channels/:channelId/invite/:address — invite user to private channel. */
-  async inviteUser(channelId: number, address: string, body: string): Promise<void> {
+  async inviteUser(channelId: number, address: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    await this.postAuthenticated(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, body);
+    const envelope = await buildInvite(this.signer, channelId, address);
+    await this.postEnvelope(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, envelope);
   }
 
   /** Discover nodes from the current home node for failover. */
@@ -542,32 +522,9 @@ export class OgmaraClient {
       const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
       return resp.json();
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  private async putAuthenticated(path: string, body: string): Promise<void> {
-    if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('PUT', path);
-    const url = `${this.nodeUrl}${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      const resp = await fetch(url, {
-        method: 'PUT',
-        headers: { ...headers, 'content-type': 'application/octet-stream' },
-        body,
-        signal: controller.signal,
-      });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
-      }
     } finally {
       clearTimeout(timeoutId);
     }
@@ -582,7 +539,7 @@ export class OgmaraClient {
       const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
       return resp.json();
     } finally {
@@ -590,7 +547,8 @@ export class OgmaraClient {
     }
   }
 
-  private async postAuthenticated<T>(path: string, body: string): Promise<T> {
+  /** POST with envelope bytes (MessagePack binary body). */
+  private async postEnvelope<T>(path: string, envelopeBytes: Uint8Array): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
 
     const headers = await this.signer.signRequest('POST', path);
@@ -605,14 +563,62 @@ export class OgmaraClient {
           ...headers,
           'content-type': 'application/octet-stream',
         },
-        body,
+        body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text}`);
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
       return resp.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** PUT with envelope bytes (MessagePack binary body). */
+  private async putEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('PUT', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** DELETE with envelope bytes (MessagePack binary body). */
+  private async deleteEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('DELETE', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers, 'content-type': 'application/octet-stream' },
+        body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
     } finally {
       clearTimeout(timeoutId);
     }

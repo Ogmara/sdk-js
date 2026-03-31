@@ -70,7 +70,9 @@ export class WalletSigner {
   /** Build auth headers for an API request. */
   async signRequest(method: string, path: string): Promise<AuthHeaders> {
     const timestamp = Date.now();
-    const authString = `ogmara-auth:${timestamp}:${method}:${path}`;
+    // Sign path without query string — server verifies req.uri().path() only
+    const pathOnly = path.split('?')[0];
+    const authString = `ogmara-auth:${timestamp}:${method}:${pathOnly}`;
     const signature = await this.signKleverMessage(new TextEncoder().encode(authString));
 
     return {

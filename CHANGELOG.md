@@ -5,6 +5,15 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-03-31
+
+### Fixed
+- Signature verification failed on L2 node — `msg_type` was sent as numeric
+  discriminant (e.g., `0x20`), but `rmp-serde` interprets integers as variant
+  INDEX (32nd variant = `Report`), not discriminant. Node then computed
+  `msg_type as u8 = 0x40` for signing, while SDK signed with `0x20`. Now
+  sends variant NAME string (e.g., `"NewsPost"`) matching Rust serde format.
+
 ## [0.6.0] - 2026-03-31
 
 ### Added

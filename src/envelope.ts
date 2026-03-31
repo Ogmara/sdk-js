@@ -25,6 +25,53 @@ import {
   type NewsRepostPayload,
 } from './types';
 
+/**
+ * Map numeric MessageType to Rust enum variant name string.
+ *
+ * rmp-serde deserializes C-like enums from their variant NAME (string),
+ * not their discriminant value (integer). If we send the integer 0x20,
+ * rmp-serde interprets it as variant INDEX 32 (= Report), not
+ * discriminant 0x20 (= NewsPost). So we must encode msg_type as a string.
+ */
+const MSG_TYPE_NAME: Record<number, string> = {
+  [MessageType.ChatMessage]: 'ChatMessage',
+  [MessageType.ChatEdit]: 'ChatEdit',
+  [MessageType.ChatDelete]: 'ChatDelete',
+  [MessageType.ChatReaction]: 'ChatReaction',
+  [MessageType.DirectMessage]: 'DirectMessage',
+  [MessageType.DirectMessageEdit]: 'DirectMessageEdit',
+  [MessageType.DirectMessageDelete]: 'DirectMessageDelete',
+  [MessageType.DirectMessageReaction]: 'DirectMessageReaction',
+  [MessageType.ChannelCreate]: 'ChannelCreate',
+  [MessageType.ChannelUpdate]: 'ChannelUpdate',
+  [MessageType.ChannelJoin]: 'ChannelJoin',
+  [MessageType.ChannelLeave]: 'ChannelLeave',
+  [MessageType.ChannelAddModerator]: 'ChannelAddModerator',
+  [MessageType.ChannelRemoveModerator]: 'ChannelRemoveModerator',
+  [MessageType.ChannelKick]: 'ChannelKick',
+  [MessageType.ChannelBan]: 'ChannelBan',
+  [MessageType.ChannelUnban]: 'ChannelUnban',
+  [MessageType.ChannelPinMessage]: 'ChannelPinMessage',
+  [MessageType.ChannelUnpinMessage]: 'ChannelUnpinMessage',
+  [MessageType.ChannelInvite]: 'ChannelInvite',
+  [MessageType.NewsPost]: 'NewsPost',
+  [MessageType.NewsEdit]: 'NewsEdit',
+  [MessageType.NewsDelete]: 'NewsDelete',
+  [MessageType.NewsComment]: 'NewsComment',
+  [MessageType.NewsReaction]: 'NewsReaction',
+  [MessageType.NewsRepost]: 'NewsRepost',
+  [MessageType.ProfileUpdate]: 'ProfileUpdate',
+  [MessageType.DeviceDelegation]: 'DeviceDelegation',
+  [MessageType.DeviceRevocation]: 'DeviceRevocation',
+  [MessageType.SettingsSync]: 'SettingsSync',
+  [MessageType.Follow]: 'Follow',
+  [MessageType.Unfollow]: 'Unfollow',
+  [MessageType.Report]: 'Report',
+  [MessageType.CounterVote]: 'CounterVote',
+  [MessageType.ChannelMute]: 'ChannelMute',
+  [MessageType.DeletionRequest]: 'DeletionRequest',
+};
+
 // --- Content rating / visibility numeric mappings ---
 
 const CONTENT_RATING_MAP: Record<ContentRating, number> = {
@@ -202,10 +249,15 @@ export async function buildEnvelope(
     new Uint8Array(payloadBytes),
   );
 
-  // 4. Build the full envelope object with binary fields
+  // 4. Build the full envelope object with binary fields.
+  // msg_type must be the Rust variant NAME string (not the numeric discriminant)
+  // because rmp-serde deserializes C-like enums from variant names.
+  const msgTypeName = MSG_TYPE_NAME[msgType];
+  if (!msgTypeName) throw new Error(`Unknown message type: ${msgType}`);
+
   const envelope = {
     version: 1,
-    msg_type: msgType,
+    msg_type: msgTypeName,
     msg_id: msgId,
     author: signer.address,
     timestamp,

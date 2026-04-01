@@ -34,6 +34,16 @@ export class WalletSigner {
   private publicKey: Uint8Array;
   readonly address: string;
 
+  /**
+   * Optional wallet address for device-to-wallet mapping.
+   *
+   * When set, this signer acts as a device key that belongs to the given
+   * wallet. The node resolves this device key → wallet address for all
+   * storage/indexing. When undefined, this signer IS the wallet (built-in
+   * wallet mode — device key equals wallet key).
+   */
+  walletAddress?: string;
+
   private constructor(privateKey: Uint8Array, publicKey: Uint8Array, address: string) {
     this.privateKey = privateKey;
     this.publicKey = publicKey;
@@ -130,6 +140,32 @@ export class WalletSigner {
     data.set(tsBytes, 32 + payload.length);
     return keccak_256(data);
   }
+}
+
+/**
+ * Build a device claim string for device-to-wallet registration.
+ *
+ * The claim format is:
+ *   `ogmara-device-claim:{devicePubkeyHex}:{walletAddress}:{timestamp}`
+ *
+ * This string must be signed by the wallet key (using Klever message signing)
+ * to prove the wallet authorized this device.
+ *
+ * @param devicePubkeyHex - Hex-encoded device Ed25519 public key (64 chars)
+ * @param walletAddress - Wallet's klv1... address
+ * @param timestamp - Unix timestamp in milliseconds (defaults to Date.now())
+ * @returns The claim string and timestamp used
+ */
+export function buildDeviceClaim(
+  devicePubkeyHex: string,
+  walletAddress: string,
+  timestamp?: number,
+): { claimString: string; timestamp: number } {
+  const ts = timestamp ?? Date.now();
+  return {
+    claimString: `ogmara-device-claim:${devicePubkeyHex.toLowerCase()}:${walletAddress}:${ts}`,
+    timestamp: ts,
+  };
 }
 
 /**

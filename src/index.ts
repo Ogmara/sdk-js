@@ -26,7 +26,7 @@
  */
 
 export { OgmaraClient } from './client';
-export { WalletSigner } from './auth';
+export { WalletSigner, buildDeviceClaim } from './auth';
 export type { ExternalSigner, AuthHeaders } from './auth';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';

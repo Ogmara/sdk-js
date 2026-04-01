@@ -5,6 +5,20 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-04-01
+
+### Added
+- **Device-to-wallet identity mapping** — multi-device support:
+  - `WalletSigner.walletAddress` optional field for device-wallet binding
+  - `buildDeviceClaim(devicePubkeyHex, walletAddress, timestamp?)` helper
+    for constructing claim strings to be signed by the wallet
+  - `client.registerDevice(walletSignatureHex, walletAddress, timestamp)`
+    submits wallet-signed claim to register a device key under a wallet
+  - `client.revokeDevice(deviceAddress)` revokes a device registration
+  - `client.listDevices()` lists all devices for the authenticated wallet
+- Types: `RegisterDeviceRequest`, `RegisterDeviceResponse`, `DeviceInfo`,
+  `ListDevicesResponse`, `RevokeDeviceResponse`
+
 ## [0.7.0] - 2026-03-31
 
 ### Added

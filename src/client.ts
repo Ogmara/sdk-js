@@ -72,6 +72,10 @@ import type {
   ChannelBansResponse,
   ChannelDetailResponse,
   ModeratorPermissions,
+  RegisterDeviceRequest,
+  RegisterDeviceResponse,
+  RevokeDeviceResponse,
+  ListDevicesResponse,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -521,6 +525,49 @@ export class OgmaraClient {
     await this.postEnvelope(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, envelope);
   }
 
+  // --- Device Identity Management ---
+
+  /**
+   * Register a device key under a wallet.
+   *
+   * Submits a wallet-signed claim that binds the device key to the wallet.
+   * The claim must be signed by the wallet (via extension or K5).
+   *
+   * @param walletSignatureHex - Hex-encoded wallet signature over the claim string
+   * @param walletAddress - The wallet's klv1... address
+   * @param timestamp - The timestamp used in the claim string
+   */
+  async registerDevice(
+    walletSignatureHex: string,
+    walletAddress: string,
+    timestamp: number,
+  ): Promise<RegisterDeviceResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    const result = await this.postJson<RegisterDeviceResponse>('/api/v1/devices/register', {
+      device_pubkey_hex: this.signer.publicKeyHex,
+      wallet_address: walletAddress,
+      wallet_signature: walletSignatureHex,
+      timestamp,
+    } satisfies RegisterDeviceRequest);
+    // Auto-set walletAddress on the signer after successful registration
+    if (result.ok) {
+      this.signer.walletAddress = walletAddress;
+    }
+    return result;
+  }
+
+  /** Revoke a device registration. Only the owning wallet can revoke. */
+  async revokeDevice(deviceAddress: string): Promise<RevokeDeviceResponse> {
+    return this.deleteAuthenticated<RevokeDeviceResponse>(
+      `/api/v1/devices/${encodeURIComponent(deviceAddress)}`,
+    );
+  }
+
+  /** List all devices registered to the authenticated wallet. */
+  async listDevices(): Promise<ListDevicesResponse> {
+    return this.getAuthenticated<ListDevicesResponse>('/api/v1/devices');
+  }
+
   /** Discover nodes from the current home node for failover. */
   async discoverNodes(): Promise<void> {
     const resp = await this.listNodes();
@@ -639,6 +686,55 @@ export class OgmaraClient {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** POST with JSON body (for non-envelope endpoints like device registration). */
+  private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('POST', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+      return resp.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /** DELETE with auth headers (no body). */
+  private async deleteAuthenticated<T>(path: string): Promise<T> {
+    if (!this.signer) throw new Error('Signer required');
+    const headers = await this.signer.signRequest('DELETE', path);
+    const url = `${this.nodeUrl}${path}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const resp = await fetch(url, {
+        method: 'DELETE',
+        headers: { ...headers },
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+      return resp.json();
     } finally {
       clearTimeout(timeoutId);
     }

@@ -426,6 +426,43 @@ export interface ChannelBansResponse {
   }[];
 }
 
+// --- Device Identity ---
+
+/** Request body for device registration. */
+export interface RegisterDeviceRequest {
+  device_pubkey_hex: string;
+  wallet_address: string;
+  wallet_signature: string;
+  timestamp: number;
+}
+
+/** Response from device registration. */
+export interface RegisterDeviceResponse {
+  ok: boolean;
+  device_address: string;
+  wallet_address: string;
+}
+
+/** A registered device in the list response. */
+export interface DeviceInfo {
+  device_address: string;
+  device_pubkey_hex: string;
+  registered_at: number;
+}
+
+/** Response from listing devices. */
+export interface ListDevicesResponse {
+  wallet_address: string;
+  devices: DeviceInfo[];
+  total: number;
+}
+
+/** Response from device revocation. */
+export interface RevokeDeviceResponse {
+  ok: boolean;
+  device_address: string;
+}
+
 /** Extended channel detail response (with admin data). */
 export interface ChannelDetailResponse {
   channel: Channel & {

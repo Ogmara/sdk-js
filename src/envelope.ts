@@ -13,6 +13,7 @@
  */
 
 import { encode } from '@msgpack/msgpack';
+import { keccak_256 } from '@noble/hashes/sha3';
 import type { WalletSigner } from './auth';
 import {
   MessageType,
@@ -24,6 +25,7 @@ import {
   type ReactionPayload,
   type NewsRepostPayload,
   type NewsCommentData,
+  type DirectMessageData,
 } from './types';
 
 /**
@@ -97,6 +99,19 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+// --- Conversation ID ---
+
+/**
+ * Compute a deterministic DM conversation ID from two Klever addresses.
+ *
+ * Sorts the addresses lexicographically and hashes with Keccak-256.
+ * Produces identical output to the Rust `compute_conversation_id`.
+ */
+export function computeConversationId(addrA: string, addrB: string): Uint8Array {
+  const [first, second] = addrA <= addrB ? [addrA, addrB] : [addrB, addrA];
+  return keccak_256(new TextEncoder().encode(first + second));
+}
+
 // --- Payload serializers ---
 // Each returns a plain object matching the Rust struct field names exactly.
 // The object is then MessagePack-encoded by buildEnvelope().
@@ -159,6 +174,24 @@ function repostPayload(data: NewsRepostPayload): Record<string, unknown> {
     original_id: hexToBytes(data.original_id),
     original_author: data.original_author,
     comment: data.comment ?? null,
+  };
+}
+
+function directMessagePayload(
+  data: DirectMessageData,
+  signer: WalletSigner,
+): Record<string, unknown> {
+  const senderAddress = signer.walletAddress ?? signer.address;
+  const conversationId = computeConversationId(senderAddress, data.recipient);
+  return {
+    recipient: data.recipient,
+    conversation_id: conversationId,
+    // MVP: plaintext content, no encryption
+    content: new TextEncoder().encode(data.content),
+    nonce: new Uint8Array(12),
+    key_epoch: 0,
+    reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
+    attachments: [],
   };
 }
 
@@ -314,6 +347,10 @@ export async function buildReaction(signer: WalletSigner, data: ReactionPayload)
 
 export async function buildRepost(signer: WalletSigner, data: NewsRepostPayload): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.NewsRepost, repostPayload(data));
+}
+
+export async function buildDirectMessage(signer: WalletSigner, data: DirectMessageData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DirectMessage, directMessagePayload(data, signer));
 }
 
 // Channel admin builders

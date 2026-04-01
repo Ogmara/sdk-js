@@ -30,7 +30,7 @@ export { WalletSigner, buildDeviceClaim } from './auth';
 export type { ExternalSigner, AuthHeaders } from './auth';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';
-export { buildEnvelope, buildChatMessage, buildNewsPost, buildNewsComment, buildProfileUpdate, buildFollow, buildUnfollow, buildReaction, buildRepost } from './envelope';
+export { buildEnvelope, buildChatMessage, buildNewsPost, buildNewsComment, buildProfileUpdate, buildFollow, buildUnfollow, buildReaction, buildRepost, buildDirectMessage, computeConversationId } from './envelope';
 export * from './types';
 export {
   extractHashtags,

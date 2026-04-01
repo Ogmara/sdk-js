@@ -359,6 +359,18 @@ export class OgmaraClient {
     return this.getAuthenticated(path);
   }
 
+  /** POST /api/v1/dm/:address/read — mark DM conversation as read. */
+  async markDmRead(address: string): Promise<{ ok: boolean }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.postJson(`/api/v1/dm/${encodeURIComponent(address)}/read`, {});
+  }
+
+  /** GET /api/v1/dm/unread — get unread counts per DM conversation. */
+  async getDmUnread(): Promise<{ unread: Record<string, number> }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.getAuthenticated('/api/v1/dm/unread');
+  }
+
   /** GET /api/v1/notifications — fetch notifications for the authenticated user. */
   async getNotifications(since?: number, limit = 50): Promise<NotificationsResponse> {
     if (!this.signer) throw new Error('Signer required');

@@ -79,11 +79,22 @@ export interface NewsCommentData {
   attachments?: Attachment[];
 }
 
+/** Direct message data for sending. */
+export interface DirectMessageData {
+  /** Recipient's klv1... wallet address. */
+  recipient: string;
+  /** Message content (plaintext for MVP). */
+  content: string;
+  /** Hex msg_id of parent message (for replies). */
+  replyTo?: string;
+}
+
 /** DM conversation summary. */
 export interface DmConversation {
   conversation_id: string;
   peer: string;
   last_message_at: number;
+  last_message_preview: string;
   unread_count: number;
 }
 

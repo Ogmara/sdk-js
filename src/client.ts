@@ -136,6 +136,18 @@ export class OgmaraClient {
     return this.get(path);
   }
 
+  /** POST /api/v1/channels/:channelId/read — mark channel as read. */
+  async markChannelRead(channelId: number): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    await this.postJson(`/api/v1/channels/${channelId}/read`, {});
+  }
+
+  /** GET /api/v1/channels/unread — get unread counts per channel. */
+  async getUnreadCounts(): Promise<{ unread: Record<string, number> }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.getAuthenticated('/api/v1/channels/unread');
+  }
+
   /** GET /api/v1/news */
   async listNews(page = 1, limit = 20, tag?: string): Promise<NewsResponse> {
     let path = `/api/v1/news?page=${page}&limit=${limit}`;

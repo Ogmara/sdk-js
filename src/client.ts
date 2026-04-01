@@ -307,6 +307,7 @@ export class OgmaraClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
+    console.log('[SDK] uploadMedia:', url, 'file:', filename, 'size:', file.size);
     try {
       const resp = await fetch(url, {
         method: 'POST',
@@ -314,11 +315,15 @@ export class OgmaraClient {
         body: formData,
         signal: controller.signal,
       });
+      console.log('[SDK] uploadMedia response:', resp.status, resp.statusText);
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
+        console.error('[SDK] uploadMedia error body:', text);
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      const result = await resp.json();
+      console.log('[SDK] uploadMedia result:', result);
+      return result;
     } finally {
       clearTimeout(timeoutId);
     }

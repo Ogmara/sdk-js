@@ -302,10 +302,39 @@ export interface NotificationsResponse {
 
 /** Channel creation data for POST /api/v1/channels. */
 export interface ChannelCreateData {
+  /** SC-assigned sequential channel ID. */
+  channelId: number;
+  /** Unique slug (matches SC), max 64 chars. */
   slug: string;
-  display_name?: string;
+  /** Channel type: 0 = Public, 1 = ReadPublic, 2 = Private. */
+  channelType?: number;
+  /** Human-readable name, max 64 chars. */
+  displayName?: string;
+  /** Channel description, max 256 chars. */
   description?: string;
-  channel_type?: number;
+  /** Human-readable moderation rules. */
+  rules?: string;
+}
+
+/** Channel update data for modifying channel info. */
+export interface ChannelUpdateData {
+  channelId: number;
+  displayName?: string;
+  description?: string;
+  logoCid?: string;
+  bannerCid?: string;
+  websiteUrl?: string;
+  tags?: string[];
+  rules?: string;
+}
+
+/** Channel mute data for muting a user. */
+export interface ChannelMuteData {
+  channelId: number;
+  targetUser: string;
+  /** Duration in seconds (0 = permanent). */
+  durationSecs?: number;
+  reason?: string;
 }
 
 /** Channel creation response. */

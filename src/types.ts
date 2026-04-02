@@ -503,6 +503,91 @@ export interface RevokeDeviceResponse {
   device_address: string;
 }
 
+// --- v0.11.0 Message Action types ---
+
+/** Chat message edit data. */
+export interface ChatEditData {
+  channelId: number;
+  msgId: string;   // hex msg_id of original message
+  content: string; // new content
+}
+
+/** Chat message delete data. */
+export interface ChatDeleteData {
+  channelId: number;
+  msgId: string; // hex msg_id of message to delete
+}
+
+/** Chat message reaction data. */
+export interface ChatReactionData {
+  channelId: number;
+  msgId: string; // hex msg_id of target message
+  emoji: string;
+  remove: boolean;
+}
+
+/** DM edit data. */
+export interface DirectMessageEditData {
+  recipient: string;
+  msgId: string;
+  content: string;
+}
+
+/** DM delete data. */
+export interface DirectMessageDeleteData {
+  recipient: string;
+  msgId: string;
+}
+
+/** DM reaction data. */
+export interface DirectMessageReactionData {
+  recipient: string;
+  msgId: string;
+  emoji: string;
+  remove: boolean;
+}
+
+/** News edit data. */
+export interface NewsEditData {
+  msgId: string;
+  title?: string;
+  content: string;
+  tags?: string[];
+}
+
+/** News delete data. */
+export interface NewsDeleteData {
+  msgId: string;
+}
+
+/** Settings sync data for cross-device settings. */
+export interface SettingsSyncData {
+  /** AES-256-GCM encrypted settings blob (hex). */
+  encrypted_blob: string;
+  /** IV used for encryption (hex). */
+  iv: string;
+}
+
+/** Report data for moderation. */
+export interface ReportData {
+  targetId: string;
+  reason: string;
+  category: 'spam' | 'harassment' | 'illegal' | 'other';
+}
+
+/** Counter-vote data against a moderation report. */
+export interface CounterVoteData {
+  reportId: string;
+  reason?: string;
+}
+
+/** Settings sync response (GET). */
+export interface SettingsSyncResponse {
+  encrypted_blob: string;
+  iv: string;
+  updated_at: number;
+}
+
 /** Extended channel detail response (with admin data). */
 export interface ChannelDetailResponse {
   channel: Channel & {

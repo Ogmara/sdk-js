@@ -669,7 +669,11 @@ export class OgmaraClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const resp = await fetch(url, { signal: controller.signal });
+      // Send auth headers when available (for optional-auth endpoints like channels list)
+      const headers = this.signer
+        ? { ...await this.signer.signRequest('GET', path) }
+        : {} as Record<string, string>;
+      const resp = await fetch(url, { headers, signal: controller.signal });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);

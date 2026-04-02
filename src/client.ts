@@ -343,6 +343,12 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
+  /** DELETE /api/v1/channels/:channelId — delete a channel (creator only). */
+  async deleteChannel(channelId: number): Promise<{ ok: boolean }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.deleteAuthenticated(`/api/v1/channels/${channelId}`);
+  }
+
   /** POST /api/v1/media/upload — upload media to IPFS via the node. */
   async uploadMedia(file: Blob, filename?: string): Promise<UploadResult> {
     if (!this.signer) throw new Error('Signer required');

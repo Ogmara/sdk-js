@@ -40,6 +40,17 @@ import {
   buildChannelJoin,
   buildChannelLeave,
   buildChannelMute,
+  buildChatEdit,
+  buildChatDelete,
+  buildChatReaction,
+  buildDmEdit,
+  buildDmDelete,
+  buildDmReaction,
+  buildNewsEdit,
+  buildNewsDelete,
+  buildSettingsSync,
+  buildReport,
+  buildCounterVote,
 } from './envelope';
 import type {
   Health,
@@ -84,6 +95,18 @@ import type {
   RegisterDeviceResponse,
   RevokeDeviceResponse,
   ListDevicesResponse,
+  ChatEditData,
+  ChatDeleteData,
+  ChatReactionData,
+  DirectMessageEditData,
+  DirectMessageDeleteData,
+  DirectMessageReactionData,
+  NewsEditData,
+  NewsDeleteData,
+  SettingsSyncData,
+  SettingsSyncResponse,
+  ReportData,
+  CounterVoteData,
 } from './types';
 
 /** Ogmara SDK client for the L2 node REST API. */
@@ -589,6 +612,100 @@ export class OgmaraClient {
     if (!this.signer) throw new Error('Signer required');
     const envelope = await buildInvite(this.signer, channelId, address);
     await this.postEnvelope(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, envelope);
+  }
+
+  // --- v0.11.0 Message Actions ---
+
+  /** POST /api/v1/messages — edit a chat message (own, within 30 min). */
+  async editMessage(channelId: number, msgId: string, content: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChatEdit(this.signer, { channelId, msgId, content });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — delete a chat message (own). */
+  async deleteMessage(channelId: number, msgId: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChatDelete(this.signer, { channelId, msgId });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — react to a chat message. */
+  async reactToMessage(channelId: number, msgId: string, emoji: string, remove = false): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChatReaction(this.signer, { channelId, msgId, emoji, remove });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — edit a DM (own). */
+  async editDm(recipient: string, msgId: string, content: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildDmEdit(this.signer, { recipient, msgId, content });
+    await this.postEnvelope(`/api/v1/dm/${encodeURIComponent(recipient)}`, envelope);
+  }
+
+  /** POST /api/v1/messages — delete a DM (own). */
+  async deleteDm(recipient: string, msgId: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildDmDelete(this.signer, { recipient, msgId });
+    await this.postEnvelope(`/api/v1/dm/${encodeURIComponent(recipient)}`, envelope);
+  }
+
+  /** POST /api/v1/messages — react to a DM. */
+  async reactToDm(recipient: string, msgId: string, emoji: string, remove = false): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildDmReaction(this.signer, { recipient, msgId, emoji, remove });
+    await this.postEnvelope(`/api/v1/dm/${encodeURIComponent(recipient)}`, envelope);
+  }
+
+  /** POST /api/v1/messages — edit a news post (own, within 30 min, registered). */
+  async editNews(msgId: string, content: string, options?: { title?: string; tags?: string[] }): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildNewsEdit(this.signer, {
+      msgId,
+      content,
+      title: options?.title,
+      tags: options?.tags,
+    });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — delete a news post (own). */
+  async deleteNews(msgId: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildNewsDelete(this.signer, { msgId });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — sync encrypted settings to L2 node. */
+  async syncSettings(data: SettingsSyncData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildSettingsSync(this.signer, data);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** GET /api/v1/settings — retrieve synced settings. */
+  async getSettings(): Promise<SettingsSyncResponse | null> {
+    if (!this.signer) throw new Error('Signer required');
+    try {
+      return await this.getAuthenticated<SettingsSyncResponse>('/api/v1/settings');
+    } catch {
+      return null;
+    }
+  }
+
+  /** POST /api/v1/messages — report content for moderation. */
+  async reportMessage(targetId: string, reason: string, category: ReportData['category']): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildReport(this.signer, { targetId, reason, category });
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — counter-vote against a moderation report. */
+  async counterVote(reportId: string, reason?: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildCounterVote(this.signer, { reportId, reason });
+    await this.postEnvelope('/api/v1/messages', envelope);
   }
 
   // --- Device Identity Management ---

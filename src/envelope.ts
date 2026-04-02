@@ -29,6 +29,17 @@ import {
   type ChannelCreateData,
   type ChannelUpdateData,
   type ChannelMuteData,
+  type ChatEditData,
+  type ChatDeleteData,
+  type ChatReactionData,
+  type DirectMessageEditData,
+  type DirectMessageDeleteData,
+  type DirectMessageReactionData,
+  type NewsEditData,
+  type NewsDeleteData,
+  type SettingsSyncData,
+  type ReportData,
+  type CounterVoteData,
 } from './types';
 
 /**
@@ -186,12 +197,15 @@ function directMessagePayload(
 ): Record<string, unknown> {
   const senderAddress = signer.walletAddress ?? signer.address;
   const conversationId = computeConversationId(senderAddress, data.recipient);
+  // MVP: plaintext content, no encryption. Random nonce for future E2E readiness.
+  const nonce = typeof crypto !== 'undefined' && crypto.getRandomValues
+    ? crypto.getRandomValues(new Uint8Array(12))
+    : new Uint8Array(12);
   return {
     recipient: data.recipient,
     conversation_id: conversationId,
-    // MVP: plaintext content, no encryption
     content: new TextEncoder().encode(data.content),
-    nonce: new Uint8Array(12),
+    nonce,
     key_epoch: 0,
     reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
     attachments: [],
@@ -446,4 +460,149 @@ export async function buildChannelUpdate(signer: WalletSigner, data: ChannelUpda
 
 export async function buildChannelMute(signer: WalletSigner, data: ChannelMuteData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.ChannelMute, channelMutePayload(data));
+}
+
+// --- v0.11.0 message action builders ---
+
+function chatEditPayload(data: ChatEditData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    msg_id: hexToBytes(data.msgId),
+    content: data.content,
+  };
+}
+
+function chatDeletePayload(data: ChatDeleteData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    msg_id: hexToBytes(data.msgId),
+  };
+}
+
+function chatReactionPayload(data: ChatReactionData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    msg_id: hexToBytes(data.msgId),
+    emoji: data.emoji,
+    remove: data.remove,
+  };
+}
+
+function dmEditPayload(data: DirectMessageEditData, signer: WalletSigner): Record<string, unknown> {
+  const senderAddress = signer.walletAddress ?? signer.address;
+  const conversationId = computeConversationId(senderAddress, data.recipient);
+  const nonce = typeof crypto !== 'undefined' && crypto.getRandomValues
+    ? crypto.getRandomValues(new Uint8Array(12))
+    : new Uint8Array(12);
+  return {
+    recipient: data.recipient,
+    conversation_id: conversationId,
+    msg_id: hexToBytes(data.msgId),
+    content: new TextEncoder().encode(data.content),
+    nonce,
+    key_epoch: 0,
+  };
+}
+
+function dmDeletePayload(data: DirectMessageDeleteData, signer: WalletSigner): Record<string, unknown> {
+  const senderAddress = signer.walletAddress ?? signer.address;
+  const conversationId = computeConversationId(senderAddress, data.recipient);
+  return {
+    recipient: data.recipient,
+    conversation_id: conversationId,
+    msg_id: hexToBytes(data.msgId),
+  };
+}
+
+function dmReactionPayload(data: DirectMessageReactionData, signer: WalletSigner): Record<string, unknown> {
+  const senderAddress = signer.walletAddress ?? signer.address;
+  const conversationId = computeConversationId(senderAddress, data.recipient);
+  return {
+    recipient: data.recipient,
+    conversation_id: conversationId,
+    msg_id: hexToBytes(data.msgId),
+    emoji: data.emoji,
+    remove: data.remove,
+  };
+}
+
+function newsEditPayload(data: NewsEditData): Record<string, unknown> {
+  return {
+    msg_id: hexToBytes(data.msgId),
+    title: data.title ?? null,
+    content: data.content,
+    tags: data.tags ?? [],
+  };
+}
+
+function newsDeletePayload(data: NewsDeleteData): Record<string, unknown> {
+  return {
+    msg_id: hexToBytes(data.msgId),
+  };
+}
+
+function settingsSyncPayload(data: SettingsSyncData): Record<string, unknown> {
+  return {
+    encrypted_blob: data.encrypted_blob,
+    iv: data.iv,
+  };
+}
+
+function reportPayload(data: ReportData): Record<string, unknown> {
+  return {
+    target_id: hexToBytes(data.targetId),
+    reason: data.reason,
+    category: data.category,
+  };
+}
+
+function counterVotePayload(data: CounterVoteData): Record<string, unknown> {
+  return {
+    report_id: hexToBytes(data.reportId),
+    reason: data.reason ?? null,
+  };
+}
+
+export async function buildChatEdit(signer: WalletSigner, data: ChatEditData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChatEdit, chatEditPayload(data));
+}
+
+export async function buildChatDelete(signer: WalletSigner, data: ChatDeleteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChatDelete, chatDeletePayload(data));
+}
+
+export async function buildChatReaction(signer: WalletSigner, data: ChatReactionData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChatReaction, chatReactionPayload(data));
+}
+
+export async function buildDmEdit(signer: WalletSigner, data: DirectMessageEditData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DirectMessageEdit, dmEditPayload(data, signer));
+}
+
+export async function buildDmDelete(signer: WalletSigner, data: DirectMessageDeleteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DirectMessageDelete, dmDeletePayload(data, signer));
+}
+
+export async function buildDmReaction(signer: WalletSigner, data: DirectMessageReactionData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DirectMessageReaction, dmReactionPayload(data, signer));
+}
+
+export async function buildNewsEdit(signer: WalletSigner, data: NewsEditData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.NewsEdit, newsEditPayload(data));
+}
+
+export async function buildNewsDelete(signer: WalletSigner, data: NewsDeleteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.NewsDelete, newsDeletePayload(data));
+}
+
+export async function buildSettingsSync(signer: WalletSigner, data: SettingsSyncData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.SettingsSync, settingsSyncPayload(data));
+}
+
+export async function buildReport(signer: WalletSigner, data: ReportData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.Report, reportPayload(data));
+}
+
+export async function buildCounterVote(signer: WalletSigner, data: CounterVoteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.CounterVote, counterVotePayload(data));
 }

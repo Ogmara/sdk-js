@@ -35,6 +35,11 @@ import {
   buildPin,
   buildUnpin,
   buildInvite,
+  buildChannelCreate,
+  buildChannelUpdate,
+  buildChannelJoin,
+  buildChannelLeave,
+  buildChannelMute,
 } from './envelope';
 import type {
   Health,
@@ -72,6 +77,9 @@ import type {
   ChannelBansResponse,
   ChannelDetailResponse,
   ModeratorPermissions,
+  ChannelCreateData,
+  ChannelUpdateData,
+  ChannelMuteData,
   RegisterDeviceRequest,
   RegisterDeviceResponse,
   RevokeDeviceResponse,
@@ -300,11 +308,39 @@ export class OgmaraClient {
   }
 
   /** POST /api/v1/channels — create a new channel.
-   *  Note: Channel creation requires an on-chain SC call first to get the channel_id.
-   *  The envelope is built by the caller with the assigned channel_id. */
-  async createChannel(envelopeBytes: Uint8Array): Promise<ChannelCreateResponse> {
+   *  Requires an on-chain SC call first to get the channel_id. */
+  async createChannel(data: ChannelCreateData): Promise<ChannelCreateResponse> {
     if (!this.signer) throw new Error('Signer required');
-    return this.postEnvelope('/api/v1/channels', envelopeBytes);
+    const envelope = await buildChannelCreate(this.signer, data);
+    return this.postEnvelope('/api/v1/channels', envelope);
+  }
+
+  /** POST /api/v1/messages — update channel info (owner/moderator with can_edit_info). */
+  async updateChannel(data: ChannelUpdateData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChannelUpdate(this.signer, data);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — join a channel. */
+  async joinChannel(channelId: number): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChannelJoin(this.signer, channelId);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — leave a channel. */
+  async leaveChannel(channelId: number): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChannelLeave(this.signer, channelId);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** POST /api/v1/messages — mute a user in a channel (moderator action). */
+  async muteUser(data: ChannelMuteData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChannelMute(this.signer, data);
+    await this.postEnvelope('/api/v1/messages', envelope);
   }
 
   /** POST /api/v1/media/upload — upload media to IPFS via the node. */

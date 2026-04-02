@@ -26,6 +26,9 @@ import {
   type NewsRepostPayload,
   type NewsCommentData,
   type DirectMessageData,
+  type ChannelCreateData,
+  type ChannelUpdateData,
+  type ChannelMuteData,
 } from './types';
 
 /**
@@ -206,6 +209,44 @@ function serializeAttachment(a: Attachment): Record<string, unknown> {
 }
 
 // --- Channel admin payload serializers ---
+
+function channelCreatePayload(data: ChannelCreateData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    slug: data.slug,
+    channel_type: data.channelType ?? 0,
+    display_name: data.displayName ?? null,
+    description: data.description ?? null,
+    content_rating: 0,
+    moderation: {
+      admins: [],
+      rules: data.rules ?? null,
+    },
+  };
+}
+
+function channelUpdatePayload(data: ChannelUpdateData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    display_name: data.displayName ?? null,
+    description: data.description ?? null,
+    content_rating: null,
+    moderation: data.rules !== undefined ? { admins: [], rules: data.rules } : null,
+    logo_cid: data.logoCid ?? null,
+    banner_cid: data.bannerCid ?? null,
+    website_url: data.websiteUrl ?? null,
+    tags: data.tags ?? null,
+  };
+}
+
+function channelMutePayload(data: ChannelMuteData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    target_user: data.targetUser,
+    duration_secs: data.durationSecs ?? 0,
+    reason: data.reason ?? null,
+  };
+}
 
 function channelJoinPayload(channelId: number): Record<string, unknown> {
   return { channel_id: channelId };
@@ -393,4 +434,16 @@ export async function buildUnpin(signer: WalletSigner, channelId: number, msgId:
 
 export async function buildInvite(signer: WalletSigner, channelId: number, target: string): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.ChannelInvite, invitePayload(channelId, target));
+}
+
+export async function buildChannelCreate(signer: WalletSigner, data: ChannelCreateData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelCreate, channelCreatePayload(data));
+}
+
+export async function buildChannelUpdate(signer: WalletSigner, data: ChannelUpdateData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelUpdate, channelUpdatePayload(data));
+}
+
+export async function buildChannelMute(signer: WalletSigner, data: ChannelMuteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelMute, channelMutePayload(data));
 }

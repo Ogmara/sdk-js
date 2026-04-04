@@ -546,23 +546,35 @@ function newsDeletePayload(data: NewsDeleteData): Record<string, unknown> {
 
 function settingsSyncPayload(data: SettingsSyncData): Record<string, unknown> {
   return {
-    encrypted_blob: data.encrypted_blob,
-    iv: data.iv,
+    encrypted_settings: data.encrypted_settings,
+    nonce: data.nonce,
+    key_epoch: data.key_epoch,
   };
 }
 
+/** Map SDK category strings to Rust ReportReason enum variant names. */
+const REPORT_REASON_MAP: Record<string, string> = {
+  spam: 'Spam',
+  scam: 'Scam',
+  harassment: 'Harassment',
+  illegal: 'IllegalContent',
+  impersonation: 'Impersonation',
+  misrated: 'MisratedContent',
+  other: 'Other',
+};
+
 function reportPayload(data: ReportData): Record<string, unknown> {
   return {
+    target_type: 'Message', // ReportTarget enum variant
     target_id: hexToBytes(data.targetId),
-    reason: data.reason,
-    category: data.category,
+    reason: REPORT_REASON_MAP[data.category] || 'Other',
+    details: data.details?.slice(0, 256) || null,
   };
 }
 
 function counterVotePayload(data: CounterVoteData): Record<string, unknown> {
   return {
-    report_id: hexToBytes(data.reportId),
-    reason: data.reason ?? null,
+    target_id: hexToBytes(data.reportId),
   };
 }
 

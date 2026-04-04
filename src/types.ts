@@ -587,9 +587,9 @@ export interface CounterVoteData {
 
 /** Settings sync response (GET). */
 export interface SettingsSyncResponse {
-  encrypted_blob: string;
-  iv: string;
-  updated_at: number;
+  encrypted_settings: number[];
+  nonce: number[];
+  key_epoch: number;
 }
 
 /** Extended channel detail response (with admin data). */

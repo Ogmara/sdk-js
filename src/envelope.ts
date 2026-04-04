@@ -208,7 +208,7 @@ function directMessagePayload(
     nonce,
     key_epoch: 0,
     reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
-    attachments: [],
+    attachments: (data.attachments ?? []).map(serializeAttachment),
   };
 }
 

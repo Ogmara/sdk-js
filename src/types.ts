@@ -87,6 +87,8 @@ export interface DirectMessageData {
   content: string;
   /** Hex msg_id of parent message (for replies). */
   replyTo?: string;
+  /** File/media attachments. */
+  attachments?: Attachment[];
 }
 
 /** DM conversation summary. */

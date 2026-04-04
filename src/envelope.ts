@@ -130,13 +130,22 @@ export function computeConversationId(addrA: string, addrB: string): Uint8Array 
 // Each returns a plain object matching the Rust struct field names exactly.
 // The object is then MessagePack-encoded by buildEnvelope().
 
+/** Extract @klv1... addresses from text content (auto-mention detection). */
+function extractMentions(content: string): string[] {
+  const matches = content.match(/@(klv1[a-z0-9]{58})/g);
+  if (!matches) return [];
+  return [...new Set(matches.map((m) => m.slice(1)))];
+}
+
 function chatMessagePayload(data: ChatMessageData): Record<string, unknown> {
+  // Auto-extract @klv1... mentions from content if not explicitly provided
+  const mentions = data.mentions ?? extractMentions(data.content);
   return {
     channel_id: data.channelId,
     content: data.content,
     content_rating: CONTENT_RATING_MAP[data.contentRating ?? 'general'],
     reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
-    mentions: data.mentions ?? [],
+    mentions,
     attachments: (data.attachments ?? []).map(serializeAttachment),
   };
 }
@@ -153,11 +162,12 @@ function newsPostPayload(data: NewsPostData): Record<string, unknown> {
 }
 
 function newsCommentPayload(data: NewsCommentData): Record<string, unknown> {
+  const mentions = data.mentions ?? extractMentions(data.content);
   return {
     post_id: hexToBytes(data.postId),
     content: data.content,
     reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
-    mentions: data.mentions ?? [],
+    mentions,
     attachments: (data.attachments ?? []).map(serializeAttachment),
   };
 }

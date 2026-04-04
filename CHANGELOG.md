@@ -5,6 +5,14 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.5] - 2026-04-04
+
+### Added
+- Auto-extract `@klv1...` mentions from message content — `buildChatMessage`
+  and `buildNewsComment` now parse the content text for `@klv1` addresses
+  when `mentions` is not explicitly provided, ensuring the L2 node's
+  notification engine can detect and deliver mention notifications
+
 ## [0.11.4] - 2026-04-04
 
 ### Added

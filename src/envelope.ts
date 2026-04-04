@@ -466,23 +466,24 @@ export async function buildChannelMute(signer: WalletSigner, data: ChannelMuteDa
 
 function chatEditPayload(data: ChatEditData): Record<string, unknown> {
   return {
+    target_id: hexToBytes(data.msgId),
     channel_id: data.channelId,
-    msg_id: hexToBytes(data.msgId),
     content: data.content,
+    edited_at: Date.now(),
   };
 }
 
 function chatDeletePayload(data: ChatDeleteData): Record<string, unknown> {
   return {
+    target_id: hexToBytes(data.msgId),
     channel_id: data.channelId,
-    msg_id: hexToBytes(data.msgId),
   };
 }
 
 function chatReactionPayload(data: ChatReactionData): Record<string, unknown> {
   return {
+    target_id: hexToBytes(data.msgId),
     channel_id: data.channelId,
-    msg_id: hexToBytes(data.msgId),
     emoji: data.emoji,
     remove: data.remove,
   };
@@ -495,10 +496,11 @@ function dmEditPayload(data: DirectMessageEditData, signer: WalletSigner): Recor
     ? crypto.getRandomValues(new Uint8Array(12))
     : new Uint8Array(12);
   return {
+    target_id: hexToBytes(data.msgId),
     recipient: data.recipient,
     conversation_id: conversationId,
-    msg_id: hexToBytes(data.msgId),
     content: new TextEncoder().encode(data.content),
+    edited_at: Date.now(),
     nonce,
     key_epoch: 0,
   };
@@ -508,9 +510,9 @@ function dmDeletePayload(data: DirectMessageDeleteData, signer: WalletSigner): R
   const senderAddress = signer.walletAddress ?? signer.address;
   const conversationId = computeConversationId(senderAddress, data.recipient);
   return {
+    target_id: hexToBytes(data.msgId),
     recipient: data.recipient,
     conversation_id: conversationId,
-    msg_id: hexToBytes(data.msgId),
   };
 }
 
@@ -518,9 +520,9 @@ function dmReactionPayload(data: DirectMessageReactionData, signer: WalletSigner
   const senderAddress = signer.walletAddress ?? signer.address;
   const conversationId = computeConversationId(senderAddress, data.recipient);
   return {
+    target_id: hexToBytes(data.msgId),
     recipient: data.recipient,
     conversation_id: conversationId,
-    msg_id: hexToBytes(data.msgId),
     emoji: data.emoji,
     remove: data.remove,
   };
@@ -528,16 +530,17 @@ function dmReactionPayload(data: DirectMessageReactionData, signer: WalletSigner
 
 function newsEditPayload(data: NewsEditData): Record<string, unknown> {
   return {
-    msg_id: hexToBytes(data.msgId),
-    title: data.title ?? null,
+    target_id: hexToBytes(data.msgId),
     content: data.content,
+    edited_at: Date.now(),
+    title: data.title ?? null,
     tags: data.tags ?? [],
   };
 }
 
 function newsDeletePayload(data: NewsDeleteData): Record<string, unknown> {
   return {
-    msg_id: hexToBytes(data.msgId),
+    target_id: hexToBytes(data.msgId),
   };
 }
 

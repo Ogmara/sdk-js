@@ -695,9 +695,9 @@ export class OgmaraClient {
   }
 
   /** POST /api/v1/messages — report content for moderation. */
-  async reportMessage(targetId: string, reason: string, category: ReportData['category']): Promise<void> {
+  async reportMessage(targetId: string, details: string, category: ReportData['category']): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildReport(this.signer, { targetId, reason, category });
+    const envelope = await buildReport(this.signer, { targetId, details, category });
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 

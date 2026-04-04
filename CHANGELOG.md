@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All message action envelope payloads (edit, delete, reaction) now use `target_id` field instead of `msg_id`, matching L2 node's `EditPayload`, `DeletePayload`, and `ReactionPayload` structs
 - Edit payloads now include required `edited_at` timestamp field
 - Affects all variants: chat, DM, and news edit/delete/reaction
+- Report payload: added missing `target_type` field, renamed `reason`→`details` and `category`→`reason` (mapped to Rust `ReportReason` enum variant names)
+- CounterVote payload: renamed `report_id`→`target_id` to match `CounterVotePayload` struct
+- Settings sync payload: renamed `encrypted_blob`/`iv` to `encrypted_settings`/`nonce`/`key_epoch` to match `SettingsSyncPayload` struct
 
 ## [0.11.0] - 2026-04-02
 

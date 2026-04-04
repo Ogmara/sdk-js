@@ -562,17 +562,21 @@ export interface NewsDeleteData {
 
 /** Settings sync data for cross-device settings. */
 export interface SettingsSyncData {
-  /** AES-256-GCM encrypted settings blob (hex). */
-  encrypted_blob: string;
-  /** IV used for encryption (hex). */
-  iv: string;
+  /** AES-256-GCM ciphertext (raw bytes). */
+  encrypted_settings: Uint8Array;
+  /** AES-GCM nonce (12 bytes). */
+  nonce: Uint8Array;
+  /** Encryption key epoch. */
+  key_epoch: number;
 }
 
 /** Report data for moderation. */
 export interface ReportData {
   targetId: string;
-  reason: string;
-  category: 'spam' | 'harassment' | 'illegal' | 'other';
+  /** Free-text details (max 256 chars). */
+  details: string;
+  /** Report reason category — maps to L2 node ReportReason enum. */
+  category: 'spam' | 'scam' | 'harassment' | 'illegal' | 'impersonation' | 'misrated' | 'other';
 }
 
 /** Counter-vote data against a moderation report. */

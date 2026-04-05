@@ -5,6 +5,12 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.7] - 2026-04-05
+
+### Added
+- `last_read_ts` field on `MessagesResponse` — the authenticated user's read
+  cursor timestamp, enabling clients to show an unread messages divider
+
 ## [0.11.6] - 2026-04-05
 
 ### Added

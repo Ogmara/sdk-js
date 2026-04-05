@@ -156,14 +156,19 @@ export class OgmaraClient {
     return this.get(`/api/v1/channels/${channelId}`);
   }
 
-  /** GET /api/v1/channels/:channelId/messages */
+  /** GET /api/v1/channels/:channelId/messages
+   *  `after` returns messages newer than the given msg_id (incremental fetch).
+   *  `before` and `after` are mutually exclusive; `after` takes precedence.
+   */
   async getChannelMessages(
     channelId: number,
     limit = 50,
     before?: string,
+    after?: string,
   ): Promise<MessagesResponse> {
     let path = `/api/v1/channels/${channelId}/messages?limit=${limit}`;
-    if (before) path += `&before=${encodeURIComponent(before)}`;
+    if (after) path += `&after=${encodeURIComponent(after)}`;
+    else if (before) path += `&before=${encodeURIComponent(before)}`;
     return this.get(path);
   }
 
@@ -417,10 +422,11 @@ export class OgmaraClient {
   }
 
   /** GET /api/v1/dm/:address/messages — retrieve DM messages with a user. */
-  async getDmMessages(address: string, limit = 50, before?: string): Promise<DmMessagesResponse> {
+  async getDmMessages(address: string, limit = 50, before?: string, after?: string): Promise<DmMessagesResponse> {
     if (!this.signer) throw new Error('Signer required');
     let path = `/api/v1/dm/${encodeURIComponent(address)}/messages?limit=${limit}`;
-    if (before) path += `&before=${encodeURIComponent(before)}`;
+    if (after) path += `&after=${encodeURIComponent(after)}`;
+    else if (before) path += `&before=${encodeURIComponent(before)}`;
     return this.getAuthenticated(path);
   }
 

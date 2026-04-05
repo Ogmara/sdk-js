@@ -5,6 +5,12 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.6] - 2026-04-05
+
+### Added
+- `after` parameter on `getChannelMessages` and `getDmMessages` — enables
+  incremental fetching of only new messages since a known msg_id cursor
+
 ## [0.11.5] - 2026-04-04
 
 ### Added

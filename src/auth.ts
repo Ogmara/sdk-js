@@ -3,7 +3,7 @@
  *
  * Implements the auth header scheme from spec 4.2:
  *   X-Ogmara-Auth:      base64(Ed25519 signature)
- *   X-Ogmara-Address:   klv1... Klever address
+ *   X-Ogmara-Address:   klv1... (wallet) or ogd1... (device) address
  *   X-Ogmara-Timestamp: unix timestamp in milliseconds
  */
 
@@ -77,6 +77,22 @@ export class WalletSigner {
     return bytesToHex(this.publicKey);
   }
 
+  /** Get this key's device address (ogd1...). */
+  get deviceAddress(): string {
+    return devicePubkeyToAddress(this.publicKey);
+  }
+
+  /**
+   * Get the signing address for auth headers.
+   *
+   * When `walletAddress` is set, this signer is a delegated device key
+   * and uses the ogd1... device address. Otherwise it's the wallet itself
+   * and uses the klv1... address.
+   */
+  get signingAddress(): string {
+    return this.walletAddress ? this.deviceAddress : this.address;
+  }
+
   /** Build auth headers for an API request. */
   async signRequest(method: string, path: string): Promise<AuthHeaders> {
     const timestamp = Date.now();
@@ -87,7 +103,7 @@ export class WalletSigner {
 
     return {
       'x-ogmara-auth': btoa(String.fromCharCode(...signature)),
-      'x-ogmara-address': this.address,
+      'x-ogmara-address': this.signingAddress,
       'x-ogmara-timestamp': timestamp.toString(),
     };
   }
@@ -186,10 +202,22 @@ export interface ExternalSigner {
 
 // --- Helpers ---
 
+/** Bech32 HRP for Klever wallet addresses. */
+const WALLET_HRP = 'klv';
+
+/** Bech32 HRP for Ogmara device key addresses. */
+const DEVICE_HRP = 'ogd';
+
 function pubkeyToAddress(pubkey: Uint8Array): string {
-  // bech32 encode with "klv" prefix
+  // bech32 encode with "klv" wallet prefix
   const words = toWords(pubkey);
-  return bech32Encode('klv', words);
+  return bech32Encode(WALLET_HRP, words);
+}
+
+function devicePubkeyToAddress(pubkey: Uint8Array): string {
+  // bech32 encode with "ogd" device prefix
+  const words = toWords(pubkey);
+  return bech32Encode(DEVICE_HRP, words);
 }
 
 function hexToBytes(hex: string): Uint8Array {

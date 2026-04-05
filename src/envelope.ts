@@ -368,7 +368,7 @@ export async function buildEnvelope(
     version: 1,
     msg_type: msgTypeName,
     msg_id: msgId,
-    author: signer.address,
+    author: signer.signingAddress,
     timestamp,
     lamport_ts: lamportTs,
     payload: new Uint8Array(payloadBytes),

@@ -5,6 +5,21 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-04-05
+
+### Added
+- **Device address prefix (`ogd1...`)** — `WalletSigner` now exposes a
+  `deviceAddress` getter that encodes the public key with `ogd` bech32 prefix,
+  distinguishing device keys from wallet addresses (`klv1...`)
+- `signingAddress` getter on `WalletSigner` — returns `ogd1...` when
+  `walletAddress` is set (delegated device mode), or `klv1...` for built-in
+  wallet mode
+- `DEVICE_HRP` and `WALLET_HRP` constants for bech32 encoding
+
+### Changed
+- Auth headers (`signRequest`) now use `signingAddress` — device keys send
+  `ogd1...` in `X-Ogmara-Address`, wallet keys send `klv1...`
+
 ## [0.11.7] - 2026-04-05
 
 ### Added

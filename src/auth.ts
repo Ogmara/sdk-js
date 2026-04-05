@@ -92,6 +92,11 @@ export class WalletSigner {
     };
   }
 
+  /** Sign a raw hash with Ed25519 (no prefix, no additional hashing). Used for TX signing. */
+  async signRawHash(hash: Uint8Array): Promise<Uint8Array> {
+    return ed.signAsync(hash, this.privateKey);
+  }
+
   /** Sign using Klever message format: prefix + length + message -> Keccak-256 -> Ed25519. */
   async signKleverMessage(message: Uint8Array): Promise<Uint8Array> {
     const lengthStr = new TextEncoder().encode(message.length.toString());

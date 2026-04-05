@@ -147,6 +147,8 @@ export interface ChannelsResponse {
 export interface MessagesResponse {
   messages: Envelope[];
   has_more: boolean;
+  /** Unix ms timestamp of the user's last read position (only present when authenticated). */
+  last_read_ts?: number;
 }
 
 /** News list response. */

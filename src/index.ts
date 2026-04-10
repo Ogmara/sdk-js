@@ -28,6 +28,8 @@
 export { OgmaraClient } from './client';
 export { WalletSigner, buildDeviceClaim } from './auth';
 export type { ExternalSigner, AuthHeaders } from './auth';
+export { solveChallenge, solveChallengeAsync } from './pow';
+export type { PowChallenge, PowSolution, PowResult } from './pow';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';
 export {

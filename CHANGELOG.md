@@ -5,6 +5,19 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-04-10
+
+### Added
+- **Proof-of-Work solver** — new `pow.ts` module with `solveChallenge()` and
+  `solveChallengeAsync()` functions for solving SHA-256 hash puzzles.
+- **Automatic PoW handling in client** — `OgmaraClient` now detects 429
+  `pow_required` responses, auto-solves the challenge, submits the solution,
+  and retries the original request transparently.
+- **PoW lifecycle callbacks** — `onPowStart`, `onPowProgress`, and
+  `onPowComplete` callbacks on `OgmaraClient` for UI loading indicators.
+- Exports: `solveChallenge`, `solveChallengeAsync`, `PowChallenge`,
+  `PowSolution`, `PowResult` types.
+
 ## [0.12.0] - 2026-04-05
 
 ### Added

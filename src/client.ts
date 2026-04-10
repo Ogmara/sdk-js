@@ -18,6 +18,8 @@
  */
 
 import type { WalletSigner } from './auth';
+import type { PowChallenge } from './pow';
+import { solveChallengeAsync } from './pow';
 import {
   buildChatMessage,
   buildNewsPost,
@@ -115,6 +117,18 @@ export class OgmaraClient {
   private timeout: number;
   private signer?: WalletSigner;
   private knownNodes: string[] = [];
+
+  /** Whether this client's wallet has been verified (PoW solved or on-chain registered). */
+  private powVerified = false;
+
+  /** Optional callback invoked during PoW solving with progress (hashes computed). */
+  onPowProgress?: (hashes: number) => void;
+
+  /** Optional callback invoked when PoW solving starts (for UI loading indicators). */
+  onPowStart?: () => void;
+
+  /** Optional callback invoked when PoW solving completes. */
+  onPowComplete?: (elapsed_ms: number) => void;
 
   constructor(config: ClientConfig) {
     this.nodeUrl = config.nodeUrl.replace(/\/$/, ''); // strip trailing slash
@@ -826,6 +840,17 @@ export class OgmaraClient {
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
       });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const body = await resp.json().catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.solvePow(body.challenge as PowChallenge);
+          // Retry the original request with fresh auth headers
+          return this.postEnvelope(path, envelopeBytes);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -899,6 +924,16 @@ export class OgmaraClient {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const respBody = await resp.json().catch(() => null);
+        if (respBody?.error === 'pow_required' && respBody?.challenge) {
+          await this.solvePow(respBody.challenge as PowChallenge);
+          return this.postJson(path, body);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -931,5 +966,48 @@ export class OgmaraClient {
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  /**
+   * Solve a PoW challenge and submit the solution to the node.
+   *
+   * Called automatically when a 429 pow_required response is received.
+   * After successful verification, sets `powVerified = true` so subsequent
+   * requests don't trigger PoW again.
+   */
+  private async solvePow(challenge: PowChallenge): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+
+    this.onPowStart?.();
+
+    const result = await solveChallengeAsync(challenge, this.onPowProgress);
+
+    this.onPowComplete?.(result.elapsed_ms);
+
+    // Submit solution to node
+    const solution = {
+      challenge_id: challenge.challenge_id,
+      address: this.signer.signingAddress,
+      nonce: result.nonce,
+    };
+
+    const url = `${this.nodeUrl}/api/v1/pow/verify`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(solution),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`PoW verification failed (${resp.status}): ${text.slice(0, 200)}`);
+    }
+
+    const body = await resp.json();
+    if (!body.ok) {
+      throw new Error(`PoW verification rejected: ${body.error ?? 'unknown'}`);
+    }
+
+    this.powVerified = true;
   }
 }

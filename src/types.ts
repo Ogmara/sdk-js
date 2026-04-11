@@ -185,7 +185,7 @@ export type WsEvent =
 
 /** SDK client configuration. */
 export interface ClientConfig {
-  /** Primary node URL (e.g., "https://node1.ogmara.org:41721"). */
+  /** Primary node URL (e.g., "https://node.ogmara.org"). */
   nodeUrl: string;
   /** Request timeout in milliseconds (default: 30000). */
   timeout?: number;

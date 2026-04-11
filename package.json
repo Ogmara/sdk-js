@@ -1,6 +1,6 @@
 {
   "name": "@ogmara/sdk",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Ogmara JS/TS SDK — client library and embeddable widget for the Ogmara platform",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

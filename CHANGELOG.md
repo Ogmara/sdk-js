@@ -5,6 +5,14 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-04-11
+
+### Fixed
+- **`DEFAULT_NODE_URL` pointed to website instead of node** — changed from
+  `https://ogmara.org` (the main website) to `https://node.ogmara.org`
+  (the actual L2 node endpoint). This caused the node selector to show
+  the website URL as a node option.
+
 ## [0.13.0] - 2026-04-10
 
 ### Added

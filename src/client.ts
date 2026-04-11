@@ -795,7 +795,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge);
+          await this.solvePow(body.challenge as PowChallenge, body.address);
           return this.getAuthenticated(path);
         }
       }
@@ -826,7 +826,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge);
+          await this.solvePow(body.challenge as PowChallenge, body.address);
           return this.get(path);
         }
       }
@@ -865,7 +865,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge);
+          await this.solvePow(body.challenge as PowChallenge, body.address);
           // Retry the original request with fresh auth headers
           return this.postEnvelope(path, envelopeBytes);
         }
@@ -901,7 +901,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge);
+          await this.solvePow(body.challenge as PowChallenge, body.address);
           return this.putEnvelope(path, envelopeBytes);
         }
       }
@@ -935,7 +935,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge);
+          await this.solvePow(body.challenge as PowChallenge, body.address);
           return this.deleteEnvelope(path, envelopeBytes);
         }
       }
@@ -969,7 +969,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const respBody = await resp.json().catch(() => null);
         if (respBody?.error === 'pow_required' && respBody?.challenge) {
-          await this.solvePow(respBody.challenge as PowChallenge);
+          await this.solvePow(respBody.challenge as PowChallenge, respBody.address);
           return this.postJson(path, body);
         }
       }
@@ -1015,7 +1015,7 @@ export class OgmaraClient {
    * After successful verification, sets `powVerified = true` so subsequent
    * requests don't trigger PoW again.
    */
-  private async solvePow(challenge: PowChallenge): Promise<void> {
+  private async solvePow(challenge: PowChallenge, resolvedAddress?: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
 
     this.onPowStart?.();
@@ -1024,13 +1024,13 @@ export class OgmaraClient {
 
     this.onPowComplete?.(result.elapsed_ms);
 
-    // Submit solution to node.
-    // The challenge is issued to the resolved wallet address (klv1...),
-    // not the device signing address (ogd1...). Use walletAddress when
-    // available (extension/K5 mode), otherwise the signer's own address.
+    // Use the address from the server's 429 response if provided — it's the
+    // exact resolved_author the node used when issuing the challenge. This
+    // avoids mismatch when device registration hasn't completed yet (node
+    // resolves to ogd1... but client would guess klv1...).
     const solution = {
       challenge_id: challenge.challenge_id,
-      address: this.signer.walletAddress || this.signer.address,
+      address: resolvedAddress || this.signer.walletAddress || this.signer.address,
       nonce: result.nonce,
     };
 

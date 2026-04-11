@@ -5,6 +5,15 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.4] - 2026-04-11
+
+### Fixed
+- **PoW address mismatch when device registration pending** — the server now
+  includes the resolved address in the 429 challenge response. The SDK uses
+  this address directly instead of guessing, eliminating mismatches between
+  `ogd1...` (device) and `klv1...` (wallet) when the device mapping hasn't
+  been established yet.
+
 ## [0.13.3] - 2026-04-11
 
 ### Fixed

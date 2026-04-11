@@ -1024,10 +1024,13 @@ export class OgmaraClient {
 
     this.onPowComplete?.(result.elapsed_ms);
 
-    // Submit solution to node
+    // Submit solution to node.
+    // The challenge is issued to the resolved wallet address (klv1...),
+    // not the device signing address (ogd1...). Use walletAddress when
+    // available (extension/K5 mode), otherwise the signer's own address.
     const solution = {
       challenge_id: challenge.challenge_id,
-      address: this.signer.signingAddress,
+      address: this.signer.walletAddress || this.signer.address,
       nonce: result.nonce,
     };
 

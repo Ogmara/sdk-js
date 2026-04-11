@@ -5,6 +5,14 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-04-11
+
+### Fixed
+- **PoW solution uses wrong address for extension wallets** — `solvePow()`
+  submitted the device signing address (`ogd1...`) but the challenge is
+  issued to the resolved wallet address (`klv1...`). Now uses
+  `walletAddress` when available, matching the node's `resolved_author`.
+
 ## [0.13.2] - 2026-04-11
 
 ### Fixed

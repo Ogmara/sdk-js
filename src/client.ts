@@ -790,6 +790,16 @@ export class OgmaraClient {
 
     try {
       const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const body = await resp.json().catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.solvePow(body.challenge as PowChallenge);
+          return this.getAuthenticated(path);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -811,6 +821,16 @@ export class OgmaraClient {
         ? { ...await this.signer.signRequest('GET', path) }
         : {} as Record<string, string>;
       const resp = await fetch(url, { headers, signal: controller.signal });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const body = await resp.json().catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.solvePow(body.challenge as PowChallenge);
+          return this.get(path);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -876,6 +896,16 @@ export class OgmaraClient {
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
       });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const body = await resp.json().catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.solvePow(body.challenge as PowChallenge);
+          return this.putEnvelope(path, envelopeBytes);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -900,6 +930,16 @@ export class OgmaraClient {
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
       });
+
+      // Handle PoW challenge: auto-solve and retry once
+      if (resp.status === 429 && !this.powVerified) {
+        const body = await resp.json().catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.solvePow(body.challenge as PowChallenge);
+          return this.deleteEnvelope(path, envelopeBytes);
+        }
+      }
+
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);

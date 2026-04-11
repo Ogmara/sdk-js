@@ -5,6 +5,16 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-04-11
+
+### Fixed
+- **PoW challenge not handled on PUT, DELETE, and GET requests** — only
+  `postEnvelope` and `postJson` had auto-solve logic for 429 `pow_required`
+  responses. Added PoW handling to `putEnvelope`, `deleteEnvelope`, `get`,
+  and `getAuthenticated`. This caused profile updates, message deletions,
+  and authenticated reads to fail with raw 429 errors instead of
+  auto-solving the challenge and retrying.
+
 ## [0.13.1] - 2026-04-11
 
 ### Fixed

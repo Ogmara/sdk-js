@@ -5,6 +5,18 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.5] - 2026-05-02
+
+### Security
+- **Bumped `postcss` to ≥ 8.5.10 via overrides** — addresses CVE-2026-41305
+  (XSS via unescaped `</style>` in CSS stringify output). Transitive dev
+  dependency only (via `tsup` and `vitest`); not shipped in the published
+  SDK bundle. Fixed for completeness so Dependabot stops flagging.
+- **`npm audit fix` for transitive Vite vulns** — three high-severity
+  advisories on Vite 7.0.0–7.3.1 (path traversal in optimized deps, fs.deny
+  bypass, dev-server WebSocket arbitrary file read). Dev-only via vitest;
+  no runtime impact on consumers.
+
 ## [0.13.4] - 2026-04-11
 
 ### Fixed

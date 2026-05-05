@@ -260,6 +260,8 @@ function channelUpdatePayload(data: ChannelUpdateData): Record<string, unknown> 
     banner_cid: data.bannerCid ?? null,
     website_url: data.websiteUrl ?? null,
     tags: data.tags ?? null,
+    channel_type: data.channelType ?? null,
+    threads_enabled: data.threadsEnabled ?? null,
   };
 }
 

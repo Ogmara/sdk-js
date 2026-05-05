@@ -51,5 +51,9 @@ export {
   discoverAndPingNodes,
   validateNodeUrl,
   DEFAULT_NODE_URL,
+  canPost,
+  CHANNEL_TYPE_PUBLIC,
+  CHANNEL_TYPE_READ_PUBLIC,
+  CHANNEL_TYPE_PRIVATE,
 } from './utils';
 export type { TextSegment, NodeWithPing } from './utils';

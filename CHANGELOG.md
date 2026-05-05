@@ -5,6 +5,37 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-05-05
+
+### Added
+- **Read-only / broadcast channel support (paired with `l2-node` v0.31.0).**
+  `ChannelUpdateData` gained two optional fields:
+  - `channelType?: number` — flip the runtime channel type. The L2 node
+    accepts `Public` (0) ⇄ `ReadPublic` (1) only; `Private` (2) is rejected
+    at validation. Omit to leave unchanged.
+  - `threadsEnabled?: boolean` — toggle threaded posting mode (rendering
+    hint; actual thread indexing lands in Phase 3).
+- **`canPost(channel, address, isModerator)` helper** in `utils` — returns
+  whether the address may post `ChatMessage` / `ChatEdit` / `ChatDelete`
+  under the channel's runtime posting policy. Returns `true` for non-
+  ReadPublic channels and for the creator/moderators of ReadPublic
+  channels. Use this to gate composer UI in clients.
+- **Channel type constants exported:** `CHANNEL_TYPE_PUBLIC` (0),
+  `CHANNEL_TYPE_READ_PUBLIC` (1), `CHANNEL_TYPE_PRIVATE` (2).
+- **`Channel.threads_enabled?: boolean`** added to the `Channel` interface
+  so consumers can read the runtime flag from API responses without `any`.
+
+### Notes
+- Wire format: the SDK encodes `ChannelUpdate` payloads as a msgpack **map**
+  (string keys), not a positional array, so adding optional fields is
+  generally backwards-compatible. The L2 node's struct decoder (rmp-serde
+  on a serde-derived struct without `deny_unknown_fields`) silently ignores
+  unknown keys. However, until `l2-node` v0.31.0 ships, nodes won't honor
+  `channel_type` / `threads_enabled` even if they accept them — coordinate
+  node deploy before relying on the new fields client-side.
+- The `Channel.channel_type` doc-comment now clarifies it reflects the
+  runtime (L2-mutable) value, not the on-chain immutable type.
+
 ## [0.13.5] - 2026-05-02
 
 ### Security

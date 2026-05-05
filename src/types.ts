@@ -19,11 +19,24 @@ export interface Channel {
   channel_id: number;
   slug: string;
   creator: string;
+  /**
+   * Runtime channel type (L2-mutable). The L2 node may flip a channel between
+   * `Public` (0) and `ReadPublic` (1) at runtime via `ChannelUpdate`. The
+   * on-chain immutable type is the directory-listing type only — clients
+   * should treat this field as authoritative for posting policy.
+   * 0 = Public, 1 = ReadPublic (broadcast), 2 = Private.
+   */
   channel_type: number;
   created_at: number;
   display_name?: string;
   description?: string;
   member_count?: number;
+  /**
+   * When `true`, the channel renders in threaded mode (top-level posts with
+   * grouped replies). When `false` or undefined, the channel is single-post.
+   * L2-mutable via `ChannelUpdate`.
+   */
+  threads_enabled?: boolean;
 }
 
 /** A message envelope as returned by the API. */
@@ -330,6 +343,17 @@ export interface ChannelUpdateData {
   websiteUrl?: string;
   tags?: string[];
   rules?: string;
+  /**
+   * Flip the runtime channel type. Only `Public` (0) ⇄ `ReadPublic` (1) is
+   * accepted; the L2 node rejects flips to/from `Private` (2). Omit to leave
+   * the type unchanged.
+   */
+  channelType?: number;
+  /**
+   * Toggle threaded posting mode. Affects rendering and pagination only —
+   * past messages remain readable in either mode. Omit to leave unchanged.
+   */
+  threadsEnabled?: boolean;
 }
 
 /** Channel mute data for muting a user. */

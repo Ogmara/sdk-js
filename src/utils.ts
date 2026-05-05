@@ -4,7 +4,7 @@
  * Text formatting, URL detection, hashtag extraction.
  */
 
-import type { AnchorStatus } from './types';
+import type { AnchorStatus, Channel } from './types';
 
 /** Default production node. */
 export const DEFAULT_NODE_URL = 'https://node.ogmara.org';
@@ -319,4 +319,48 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
     if (rankDiff !== 0) return rankDiff;
     return pingDiff;
   });
+}
+
+/**
+ * Channel type constants (mirrors `ChannelType` in the protocol spec §3.6).
+ *
+ * Stored on the channel record as a numeric value. `Public` and `ReadPublic`
+ * are L2-mutable; `Private` is set at creation and cannot be flipped.
+ */
+export const CHANNEL_TYPE_PUBLIC = 0;
+export const CHANNEL_TYPE_READ_PUBLIC = 1;
+export const CHANNEL_TYPE_PRIVATE = 2;
+
+/**
+ * Whether a given address is permitted to post `ChatMessage` / `ChatEdit` /
+ * `ChatDelete` to a channel under the channel's runtime posting policy.
+ *
+ * Posting rules (protocol spec §3.6):
+ * - `Public` (0): any member with a valid signature can post.
+ * - `ReadPublic` (1, broadcast): only the creator and moderators can post;
+ *   members may still react.
+ * - `Private` (2): same as `Public` for the membership-set; non-members are
+ *   already filtered out at the membership layer.
+ *
+ * Pass the moderator-status flag the caller already knows from its UI state
+ * (e.g. `myRole() === 'moderator'`). When `isModerator` is unknown, pass
+ * `false` — this errs on the safe side and hides the composer.
+ *
+ * @param channel - the channel record from `getChannel()` / `listChannels()`
+ * @param address - the wallet address (klv1...) that wants to post
+ * @param isModerator - whether `address` is a moderator of `channel`
+ * @returns `true` if posting is permitted under the read-only policy
+ */
+export function canPost(
+  channel: Pick<Channel, 'channel_type' | 'creator'>,
+  address: string,
+  isModerator: boolean,
+): boolean {
+  if (channel.channel_type !== CHANNEL_TYPE_READ_PUBLIC) {
+    // Public and Private channels: posting is gated elsewhere (membership,
+    // bans, mutes). The read-only policy itself is permissive.
+    return true;
+  }
+  // ReadPublic: creator + moderators only.
+  return channel.creator === address || isModerator;
 }

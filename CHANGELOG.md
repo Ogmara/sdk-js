@@ -5,6 +5,24 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-05-06
+
+### Added
+- **`searchUsers(q, limit)` method** — wraps `GET /api/v1/users/search`
+  for `@`-mention autocomplete. Case-insensitive prefix search on
+  `display_name`; when `q` starts with `klv1...` the L2 node also
+  matches addresses. Returns `{ users: UserSearchHit[] }` with
+  `address`, `display_name` (or `null`), `avatar_cid` (or `null`),
+  and `verified` (`true` for on-chain registered users). No auth.
+  Pairs with `l2-node` v0.32.0+; older nodes return 404.
+- **`UserSearchHit` and `UserSearchResponse` types** exported from
+  `@ogmara/sdk` for clients building mention popovers.
+
+### Notes
+- Server clamps `limit` to 1..=50 (default 20) and rejects empty `q`
+  with 400. Clients should still validate locally before calling for
+  the best UX.
+
 ## [0.14.0] - 2026-05-05
 
 ### Added

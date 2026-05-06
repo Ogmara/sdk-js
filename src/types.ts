@@ -14,6 +14,23 @@ export interface User {
   bio?: string;
 }
 
+/** A single hit from `GET /api/v1/users/search` (mention autocomplete). */
+export interface UserSearchHit {
+  /** Resolved klever wallet address (always `klv1...`). */
+  address: string;
+  /** Display name as the user set it (with original casing); `null` if unset. */
+  display_name: string | null;
+  /** IPFS CID of the user's avatar; `null` if unset. */
+  avatar_cid: string | null;
+  /** `true` when the user is on-chain registered (`registered_at > 0`). */
+  verified: boolean;
+}
+
+/** Response shape for `GET /api/v1/users/search`. */
+export interface UserSearchResponse {
+  users: UserSearchHit[];
+}
+
 /** A channel in the Ogmara network. */
 export interface Channel {
   channel_id: number;

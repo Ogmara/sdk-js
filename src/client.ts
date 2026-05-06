@@ -79,6 +79,7 @@ import type {
   ChannelCreateResponse,
   UserProfileResponse,
   UserPostsResponse,
+  UserSearchResponse,
   AccountExportResponse,
   ModerationReportsResponse,
   ModerationUserResponse,
@@ -218,6 +219,24 @@ export class OgmaraClient {
   /** GET /api/v1/users/:address — full user profile with counts. */
   async getUserProfile(address: string): Promise<UserProfileResponse> {
     return this.get(`/api/v1/users/${encodeURIComponent(address)}`);
+  }
+
+  /**
+   * GET /api/v1/users/search — `@`-mention autocomplete.
+   *
+   * Case-insensitive prefix search on `display_name`. When `q` looks like
+   * a `klv1...` prefix the L2 node also matches addresses, so users can
+   * complete `@klv1abc` even if no display name is set.
+   *
+   * `limit` is clamped server-side to 1..=50 (default 20). `q` is required
+   * and capped at 64 chars after trim — empty/whitespace returns 400.
+   *
+   * No authentication required (display names are public profile data).
+   * Pairs with `l2-node` v0.32.0+; older nodes return 404.
+   */
+  async searchUsers(q: string, limit = 20): Promise<UserSearchResponse> {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    return this.get(`/api/v1/users/search?${params.toString()}`);
   }
 
   /** GET /api/v1/users/:address/posts */

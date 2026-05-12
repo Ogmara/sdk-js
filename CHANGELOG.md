@@ -5,6 +5,18 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-05-12
+
+### Changed
+- **`getUnreadCounts()` return type widened to include `mentions`.**
+  The response shape is now `{ unread: Record<string, number>; mentions?: Record<string, number> }`.
+  `mentions[channelId]` is the count of unread messages that @-mention
+  the viewer in that channel (paired with l2-node ≥ v0.33.0). The
+  field is marked optional so older nodes that don't set it remain
+  fully compatible — callers should treat `undefined` as "no mention
+  info available" rather than zero. No code change required for
+  callers that don't read mentions yet.
+
 ## [0.15.0] - 2026-05-06
 
 ### Added

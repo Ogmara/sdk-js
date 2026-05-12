@@ -193,8 +193,19 @@ export class OgmaraClient {
     await this.postJson(`/api/v1/channels/${channelId}/read`, {});
   }
 
-  /** GET /api/v1/channels/unread — get unread counts per channel. */
-  async getUnreadCounts(): Promise<{ unread: Record<string, number> }> {
+  /**
+   * GET /api/v1/channels/unread — get unread counts per channel.
+   *
+   * `unread[channelId]` is the count of unread messages (excluding own).
+   * `mentions[channelId]` is the subset of those that @-mention the viewer
+   * (resolved through device delegation). The `mentions` field is optional —
+   * older nodes that don't set it return `undefined`, in which case clients
+   * should treat it as "no mention info available" rather than zero.
+   */
+  async getUnreadCounts(): Promise<{
+    unread: Record<string, number>;
+    mentions?: Record<string, number>;
+  }> {
     if (!this.signer) throw new Error('Signer required');
     return this.getAuthenticated('/api/v1/channels/unread');
   }

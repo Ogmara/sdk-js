@@ -708,14 +708,25 @@ export class OgmaraClient {
     await this.postEnvelope(`/api/v1/dm/${encodeURIComponent(recipient)}`, envelope);
   }
 
-  /** POST /api/v1/messages — edit a news post (own, within 30 min, registered). */
-  async editNews(msgId: string, content: string, options?: { title?: string; tags?: string[] }): Promise<void> {
+  /**
+   * POST /api/v1/messages — edit a news post (own, within 30 min, registered).
+   *
+   * `attachments` MUST be supplied with the full list the post should
+   * keep after the edit — the server overwrites the stored payload with
+   * the edit envelope, so omitting it drops every attachment.
+   */
+  async editNews(
+    msgId: string,
+    content: string,
+    options?: { title?: string; tags?: string[]; attachments?: Attachment[] },
+  ): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
     const envelope = await buildNewsEdit(this.signer, {
       msgId,
       content,
       title: options?.title,
       tags: options?.tags,
+      attachments: options?.attachments,
     });
     await this.postEnvelope('/api/v1/messages', envelope);
   }

@@ -598,6 +598,15 @@ export interface NewsEditData {
   title?: string;
   content: string;
   tags?: string[];
+  /**
+   * Attachments to include with the edited post. The L2 node replaces
+   * the stored post payload with the contents of the edit envelope, so
+   * callers MUST pass the full list of attachments they want the
+   * post to keep (typically: the original attachments unchanged, or a
+   * modified list). Omitting this field is interpreted as "no
+   * attachments" and the post's existing attachments will be lost.
+   */
+  attachments?: Attachment[];
 }
 
 /** News delete data. */

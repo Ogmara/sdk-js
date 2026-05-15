@@ -5,6 +5,42 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-05-15
+
+### Added
+- **`editNews()` and the news-edit envelope now carry title, tags, and
+  attachments — all as truly optional overrides.** Aligns with L2
+  protocol §3.7 (v0.37+) read-time projection semantics: a field that
+  is *absent* from the envelope means "preserve the original", while a
+  field that is *present* (even as `null` / `[]`) means "replace
+  wholesale". `NewsEditData` now accepts `title?: string`,
+  `tags?: string[]`, and `attachments?: Attachment[]`; the encoder
+  gates each behind a `!== undefined` check so legacy callers
+  (`editNews(id, content)`) do not silently wipe the original title,
+  tag list, or attachments.
+
+### Changed
+- **All three override fields are now omitted from the envelope when
+  not passed.** Earlier in this release cycle only `attachments` was
+  conditional, while `title` defaulted to `null` and `tags` to `[]` —
+  which against an L2 v0.37 node would have wiped the original title
+  and cleared the tag list on every `editNews(id, content)` call,
+  exactly the bug the spec extension was meant to fix. All three
+  fields now follow the same "absent = preserve" pattern.
+- **Bumped minor.** Adding new optional fields to the news edit
+  payload is forward-compatible on the wire (older nodes ignore
+  unrecognized fields), but the SDK ↔ node contract for edit
+  preservation is a meaningful behaviour change — MINOR rather than
+  PATCH per Keep a Changelog.
+
+### Pairs with
+- L2 node **v0.37.0**: server-side projection now applies these
+  override fields on top of the original payload instead of
+  collapsing the response to a content string.
+- Desktop **v1.19.0+**: ComposeView pre-loads and resubmits all three
+  fields so they survive end-to-end.
+- Web **v0.33.0**: same pre-load + resubmit pattern.
+
 ## [0.16.0] - 2026-05-12
 
 ### Changed

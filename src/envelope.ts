@@ -541,13 +541,27 @@ function dmReactionPayload(data: DirectMessageReactionData, signer: WalletSigner
 }
 
 function newsEditPayload(data: NewsEditData): Record<string, unknown> {
-  return {
+  // Per L2 protocol §3.7 (v0.37+): every field override is OPTIONAL and
+  // preserved on the original payload when absent. Emitting `null` or
+  // `[]` for an omitted field would, under the v0.37 read-time projection,
+  // be treated as `Some(...)` → wholesale replace → wipe the original.
+  // So `title`, `tags`, and `attachments` are all gated on `!== undefined`
+  // identically; only the always-applied fields are unconditional.
+  const out: Record<string, unknown> = {
     target_id: hexToBytes(data.msgId),
     content: data.content,
     edited_at: Date.now(),
-    title: data.title ?? null,
-    tags: data.tags ?? [],
   };
+  if (data.title !== undefined) {
+    out.title = data.title;
+  }
+  if (data.tags !== undefined) {
+    out.tags = data.tags;
+  }
+  if (data.attachments !== undefined) {
+    out.attachments = data.attachments.map(serializeAttachment);
+  }
+  return out;
 }
 
 function newsDeletePayload(data: NewsDeleteData): Record<string, unknown> {

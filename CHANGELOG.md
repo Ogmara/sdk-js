@@ -5,6 +5,30 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-05-17
+
+Adds an opt-in flag to permit LAN / loopback / Tailscale hosts in
+`validateNodeUrl` and the helpers built on it. Required by desktop
+and native mobile clients so users can connect to their own L2 node
+on the same network — previously the SDK's SSRF guard silently
+rejected every private IP / DNS name and the calling client had no
+way to tell why.
+
+### Added
+- **`ValidateNodeUrlOptions` type and `allowPrivateHosts` flag.**
+  `validateNodeUrl(url, options?)`, `pingNode(url, timeout?,
+  options?)`, and `discoverAndPingNodes(primary, options?)` all
+  accept `{ allowPrivateHosts?: boolean }`. Default stays `false`
+  so the web client keeps the SSRF/DNS-rebinding protection it
+  needs; desktop/mobile shells should pass `true` because the
+  Tauri / React Native host process IS the trust boundary, not
+  the URL host filter.
+
+### Pairs with
+- desktop v1.22.0 — uses `allowPrivateHosts: true` from
+  `NodeSelector` and `getAvailableNodes` so users can finally add
+  Odroid / RPi / Tailscale node URLs in the picker.
+
 ## [0.17.0] - 2026-05-15
 
 ### Added

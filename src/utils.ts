@@ -200,22 +200,50 @@ const BLOCKED_HOST_PATTERNS = [
   /^\[fe80/i,
 ];
 
+/** Options for {@link validateNodeUrl}. */
+export interface ValidateNodeUrlOptions {
+  /**
+   * Allow private / LAN / loopback hostnames (e.g. `192.168.x.x`,
+   * `localhost`, `10.x.x.x`).
+   *
+   * **Default `false`** — the SSRF block stays on for the web client,
+   * where a hosted page making requests to the user's LAN is a real
+   * attack surface (DNS rebinding, browser-side SSRF).
+   *
+   * **Set to `true` on desktop / mobile clients** — those apps are
+   * already local code with full host access, so blocking LAN URLs
+   * just prevents the user from connecting to their own L2 node on
+   * the same network. The Tauri / React-Native shell IS the trust
+   * boundary, not the URL host filter.
+   */
+  allowPrivateHosts?: boolean;
+}
+
 /**
  * Validate a node URL for safety (SSRF prevention).
  * Returns the validated URL or null if unsafe.
+ *
+ * Pass `{ allowPrivateHosts: true }` on local-trust clients (desktop
+ * Tauri shell, native mobile) to permit LAN/loopback URLs — see
+ * {@link ValidateNodeUrlOptions} for the security rationale.
  */
-export function validateNodeUrl(url: string): string | null {
+export function validateNodeUrl(
+  url: string,
+  options: ValidateNodeUrlOptions = {},
+): string | null {
   try {
     const parsed = new URL(url);
     // Only allow http/https schemes
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       return null;
     }
-    // Block private/reserved IPs
-    const host = parsed.hostname;
-    for (const pattern of BLOCKED_HOST_PATTERNS) {
-      if (pattern.test(host)) {
-        return null;
+    if (!options.allowPrivateHosts) {
+      // Block private/reserved IPs (web default — SSRF mitigation).
+      const host = parsed.hostname;
+      for (const pattern of BLOCKED_HOST_PATTERNS) {
+        if (pattern.test(host)) {
+          return null;
+        }
       }
     }
     // Reasonable length limit
@@ -229,9 +257,16 @@ export function validateNodeUrl(url: string): string | null {
 /** Measure ping to a node URL (ms). Returns Infinity on failure.
  *  Validates the response is an actual L2 node health endpoint
  *  (must return JSON with `version` field) to avoid false positives
- *  from web servers that return 200 on any path. */
-export async function pingNode(nodeUrl: string, timeout = 5000): Promise<number> {
-  const validated = validateNodeUrl(nodeUrl);
+ *  from web servers that return 200 on any path.
+ *
+ *  Pass `{ allowPrivateHosts: true }` to permit LAN / loopback URLs
+ *  (desktop and mobile clients should do this; web should not). */
+export async function pingNode(
+  nodeUrl: string,
+  timeout = 5000,
+  options: ValidateNodeUrlOptions = {},
+): Promise<number> {
+  const validated = validateNodeUrl(nodeUrl, options);
   if (!validated) return Infinity;
 
   const start = Date.now();
@@ -263,12 +298,19 @@ export interface NodeWithPing {
 /**
  * Discover and ping all available nodes.
  * Returns nodes sorted by latency (best first).
+ *
+ * Pass `{ allowPrivateHosts: true }` for desktop / mobile so the
+ * primary node URL and any peer-advertised endpoints on the LAN
+ * survive validation. Web should leave it off.
  */
-export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWithPing[]> {
+export async function discoverAndPingNodes(
+  primaryUrl: string,
+  options: ValidateNodeUrlOptions = {},
+): Promise<NodeWithPing[]> {
   const results: NodeWithPing[] = [];
 
   // Always include the primary/default node
-  const primaryPing = await pingNode(primaryUrl);
+  const primaryPing = await pingNode(primaryUrl, undefined, options);
   results.push({ url: primaryUrl, ping: primaryPing });
 
   // Try to discover more nodes from the primary
@@ -284,11 +326,11 @@ export async function discoverAndPingNodes(primaryUrl: string): Promise<NodeWith
       const nodes: { api_endpoint?: string; node_id?: string; anchor_status?: AnchorStatus }[] = data.nodes ?? [];
       // Ping discovered nodes in parallel (max 10)
       const candidates = nodes
-        .filter((n) => n.api_endpoint && n.api_endpoint !== primaryUrl && validateNodeUrl(n.api_endpoint))
+        .filter((n) => n.api_endpoint && n.api_endpoint !== primaryUrl && validateNodeUrl(n.api_endpoint, options))
         .slice(0, 10);
       const pings = await Promise.all(
         candidates.map(async (n) => {
-          const p = await pingNode(n.api_endpoint!);
+          const p = await pingNode(n.api_endpoint!, undefined, options);
           return { url: n.api_endpoint!, ping: p, nodeId: n.node_id, anchorStatus: n.anchor_status };
         }),
       );

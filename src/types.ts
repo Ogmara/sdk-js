@@ -205,6 +205,94 @@ export interface NodeInfo {
   anchor_status?: AnchorStatus;
 }
 
+/**
+ * Spec 13 §10.8 attestation taxonomy. Describes how a node makes itself
+ * discoverable. Orthogonal to the existing `source` discovery tier used
+ * inside the L2 node's peer book; here we only care about what the
+ * NODE attests, not how the CLIENT learned about it.
+ */
+export type Attestation = 'on-chain' | 'gossip' | 'both';
+
+/**
+ * Spec 03 §4.1 — lightweight self-description endpoint
+ * (`GET /api/v1/network/identity`, l2-node 0.48.0+). Used by the
+ * Reachable probe in consumer-side UIs to verify that a `public_url`
+ * advertised via presence gossip actually resolves to the same
+ * libp2p PeerId that signed the gossip record.
+ */
+export interface NetworkIdentity {
+  peer_id: string;
+  network_id: string;
+  version: string;
+  public_url: string | null;
+  presence_broadcasting: boolean;
+}
+
+/**
+ * Spec 13 §10.2 / §10.6 — single presence record as exposed by
+ * `GET /api/v1/network/presence`. The L2 node enriches each row with
+ * `verified_on_chain` / `anchored` / `last_anchor_at` by cross-
+ * referencing the local SC view cache.
+ */
+export interface PresenceRecord {
+  peer_id: string;
+  public_url: string | null;
+  version: string;
+  timestamp: number;
+  ttl_secs: number;
+  first_heard: number;
+  last_heard: number;
+  expires_at: number;
+  verified_on_chain: boolean;
+  anchored: boolean;
+  last_anchor_at: number | null;
+}
+
+/**
+ * Response shape of `GET /api/v1/network/presence`. Returns
+ * `records: []` and `broadcasting: false` on nodes with presence
+ * disabled — call sites should still be able to consume the
+ * response without special-casing.
+ */
+export interface PresenceResponse {
+  self_peer_id: string;
+  broadcasting: boolean;
+  cache_size: number;
+  cache_cap: number;
+  records: PresenceRecord[];
+}
+
+/**
+ * Spec 5 §1.1 — merged client-side view of a network node.
+ *
+ * Built by `OgmaraClient.getKnownNodes()` by joining the SC-derived
+ * `/network/nodes` response with the off-chain `/network/presence`
+ * response by libp2p PeerId.
+ *
+ * Apps that want the +10 reachability contribution to `trust_score`
+ * call `OgmaraClient.markReachable(peerId)` after a successful
+ * probe; the next `getKnownNodes()` call (or in-process recompute)
+ * incorporates the timestamp. Without a probe, scores top out at 90.
+ */
+export interface KnownNode {
+  /** libp2p PeerId (12D3KooW... base58). */
+  peer_id: string;
+  /** Public REST endpoint, or null if SC has no metadata AND there's no presence record. */
+  url: string | null;
+  /** Discovery taxonomy — spec 13 §10.8. */
+  attestation: Attestation;
+  /** Whether the node anchored within the last 7 days. */
+  anchoring: boolean;
+  /** Anchor age in seconds, if known. */
+  anchor_age_seconds?: number;
+  /** Unix ms of the most recent successful reachability probe (consumer-set). */
+  reachable_probe_at?: number;
+  /** Unix ms (timestamp × 1000) of the gossip record's signing time, if presence-attested. */
+  presence_timestamp_ms?: number;
+  /** 0..100, computed via `computeTrustScore` from the fields above. */
+  trust_score: number;
+}
+
 /** WebSocket event types from the server. */
 export type WsEvent =
   | { type: 'message'; envelope: Envelope }

@@ -5,6 +5,55 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-06-01
+
+Presence-gossip consumer surface — spec 13 §10 + spec 5 §1.1. Lands
+alongside l2-node v0.48.0 which started serving the
+`/api/v1/network/presence*` and `/api/v1/network/identity` endpoints.
+
+### Added
+
+- **`OgmaraClient.getKnownNodes(probeCache?)` — high-level merged
+  view of all network nodes.** Joins `/network/nodes` (SC view) with
+  `/network/presence` (off-chain gossip cache) by libp2p PeerId,
+  returns `KnownNode[]` sorted by `trust_score` desc. Each row
+  exposes:
+  - `peer_id` (libp2p PeerId)
+  - `url` (SC-preferred on conflict; falls back to presence URL)
+  - `attestation: 'on-chain' | 'gossip' | 'both'` (spec 13 §10.8)
+  - `anchoring` boolean
+  - `anchor_age_seconds`, `presence_timestamp_ms` for diagnostics
+  - `reachable_probe_at` (apps that probe reachability themselves
+    pass a `{ peer_id: unix_ms }` map as `probeCache` so the +10
+    reachability contribution lands)
+  - `trust_score: 0..100` (computed via the exported
+    `computeTrustScore`; locked formula per planning §4.2)
+- **`OgmaraClient.getNetworkIdentity(url?)`** — wraps
+  `GET /api/v1/network/identity` for the Reachable probe. Optionally
+  targets a different node via `url` so apps can verify that a
+  gossip-claimed `public_url` resolves to the same PeerId before
+  trusting it for failover.
+- **`OgmaraClient.getPresenceRecords()`** — wraps
+  `GET /api/v1/network/presence`. Returns the home node's cached
+  presence records with `verified_on_chain` enrichment. Empty
+  `records: []` and `broadcasting: false` on nodes that haven't
+  opted in to presence — no special-casing needed at the call
+  site.
+- **`OgmaraClient.getPresenceRecord(peerId)`** — single-record
+  lookup. Returns `null` on 404 (cache miss / TTL-evicted / not
+  yet received).
+- **New types:** `NetworkIdentity`, `PresenceRecord`,
+  `PresenceResponse`, `KnownNode`, `Attestation`.
+- **`computeTrustScore(node: KnownNode): number`** — pure
+  re-scoring helper for apps that update reachability state out
+  of band and want to resort without re-fetching.
+
+### References
+
+- Spec 13 §10: <https://github.com/Ogmara/ogmara/blob/main/docs/specs/13-node-discovery.md#10-presence-gossip-layer>
+- Spec 5 §1.1: <https://github.com/Ogmara/ogmara/blob/main/docs/specs/05-clients.md#11-node-failover--auto-discovery>
+- Planning: `docs/planning/presence-gossip-plan.md` (Ogmara hub)
+
 ## [0.18.0] - 2026-05-17
 
 Adds an opt-in flag to permit LAN / loopback / Tailscale hosts in

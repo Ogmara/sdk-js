@@ -110,7 +110,39 @@ import type {
   SettingsSyncResponse,
   ReportData,
   CounterVoteData,
+  NetworkIdentity,
+  PresenceRecord,
+  PresenceResponse,
+  KnownNode,
 } from './types';
+
+/**
+ * Spec 5 §1.1 trust score derivation (locked in spec 13 §10.8 /
+ * planning doc §4.2). Returns an integer in [0, 100].
+ *
+ * Contributions:
+ *  - +50 if `attestation` includes "on-chain" (i.e., `on-chain` or `both`)
+ *  - +30 if the node anchored within the last 7 days (`anchoring === true`)
+ *  - +10 if `attestation === "both"` (cross-source consistency bonus)
+ *  - +10 if `reachable_probe_at` is set and within the last 24 hours
+ *
+ * The function is pure and exported separately so callers can
+ * re-score nodes after an external reachability probe lands
+ * without re-fetching the whole list.
+ */
+export function computeTrustScore(node: KnownNode): number {
+  let s = 0;
+  if (node.attestation === 'on-chain' || node.attestation === 'both') s += 50;
+  if (node.anchoring) s += 30;
+  if (node.attestation === 'both') s += 10;
+  if (
+    typeof node.reachable_probe_at === 'number' &&
+    Date.now() - node.reachable_probe_at < 86_400_000
+  ) {
+    s += 10;
+  }
+  return Math.min(100, s);
+}
 
 /** Ogmara SDK client for the L2 node REST API. */
 export class OgmaraClient {
@@ -220,6 +252,144 @@ export class OgmaraClient {
   /** GET /api/v1/network/nodes */
   async listNodes(page = 1, limit = 20): Promise<{ nodes: NodeInfo[]; total: number }> {
     return this.get(`/api/v1/network/nodes?page=${page}&limit=${limit}`);
+  }
+
+  /**
+   * GET /api/v1/network/identity (l2-node 0.48.0+, spec 03 §4.1).
+   *
+   * Lightweight self-description used by the Reachable probe in consumer
+   * UIs (spec 13 §10.9). Optionally targets a different node via
+   * `url` — useful when verifying that a presence-gossip claim's
+   * `public_url` actually resolves to the claimed PeerId. Without
+   * `url`, queries the configured home node.
+   */
+  async getNetworkIdentity(url?: string): Promise<NetworkIdentity> {
+    if (url) {
+      const stripped = url.replace(/\/+$/, '');
+      return this.getAbsolute<NetworkIdentity>(`${stripped}/api/v1/network/identity`);
+    }
+    return this.get<NetworkIdentity>('/api/v1/network/identity');
+  }
+
+  /**
+   * GET /api/v1/network/presence (l2-node 0.48.0+, spec 13 §10.6).
+   *
+   * Returns the home node's cached presence-gossip records. Each row
+   * is enriched server-side with `verified_on_chain` / `anchored` /
+   * `last_anchor_at`. Returns an empty `records` array when the node
+   * has presence disabled.
+   */
+  async getPresenceRecords(): Promise<PresenceResponse> {
+    return this.get<PresenceResponse>('/api/v1/network/presence');
+  }
+
+  /**
+   * GET /api/v1/network/presence/:peer_id (l2-node 0.48.0+).
+   *
+   * Returns the single cached record for `peerId`, or `null` if the
+   * node hasn't cached one (TTL-evicted, never received, or presence
+   * disabled).
+   */
+  async getPresenceRecord(peerId: string): Promise<PresenceRecord | null> {
+    try {
+      return await this.get<PresenceRecord>(
+        `/api/v1/network/presence/${encodeURIComponent(peerId)}`,
+      );
+    } catch (e) {
+      if (e instanceof Error && /\b404\b/.test(e.message)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * Spec 5 §1.1 — merged client-side view of all known nodes.
+   *
+   * Joins the SC-derived `/network/nodes` response with the off-chain
+   * `/network/presence` cache by libp2p PeerId. Each result carries:
+   *  - `attestation`     — `on-chain` / `gossip` / `both` (spec 13 §10.8).
+   *  - `anchoring`       — true if the node anchored within the last 7 days.
+   *  - `trust_score`     — 0..100, computed via {@link computeTrustScore}.
+   *
+   * Results are sorted by `trust_score` desc as a sensible default for
+   * failover selection. Apps building their own UI may resort by
+   * latency, version, or any other field.
+   *
+   * @param probeCache Optional map of `peerId -> unix ms of last
+   *   successful reachability probe`. Apps that maintain their own
+   *   probe state pass it here so the +10 reachability contribution
+   *   lands in `trust_score`. Without it, scores top out at 90.
+   */
+  async getKnownNodes(
+    probeCache?: Record<string, number>,
+  ): Promise<KnownNode[]> {
+    const scResp = await this.listNodes(1, 256).catch(() => ({
+      nodes: [] as NodeInfo[],
+      total: 0,
+    }));
+    const presenceResp = await this.getPresenceRecords().catch<PresenceResponse>(() => ({
+      self_peer_id: '',
+      broadcasting: false,
+      cache_size: 0,
+      cache_cap: 4096,
+      records: [],
+    }));
+
+    const merged = new Map<string, KnownNode>();
+
+    // Seed with SC view first — SC is the trust root, so its URL wins
+    // on conflict (matches the website's spec 9 §3.2.2 merge rule).
+    for (const n of scResp.nodes) {
+      if (!n.node_id) continue;
+      const anchoring =
+        n.anchor_status?.level === 'active' ||
+        n.anchor_status?.level === 'verified';
+      const age = n.anchor_status?.last_anchor_age_seconds;
+      merged.set(n.node_id, {
+        peer_id: n.node_id,
+        url: n.api_endpoint ?? null,
+        attestation: 'on-chain',
+        anchoring,
+        anchor_age_seconds: typeof age === 'number' ? age : undefined,
+        reachable_probe_at: probeCache?.[n.node_id],
+        trust_score: 0, // computed below
+      });
+    }
+
+    // Layer presence records on top.
+    for (const rec of presenceResp.records) {
+      if (!rec.peer_id) continue;
+      const existing = merged.get(rec.peer_id);
+      if (existing) {
+        existing.attestation = 'both';
+        existing.presence_timestamp_ms = rec.timestamp * 1000;
+        // SC URL wins on conflict, but if SC had no URL, fall back to
+        // the presence URL so callers see something.
+        if (!existing.url && rec.public_url) existing.url = rec.public_url;
+      } else {
+        merged.set(rec.peer_id, {
+          peer_id: rec.peer_id,
+          url: rec.public_url,
+          attestation: 'gossip',
+          anchoring: rec.anchored,
+          anchor_age_seconds:
+            rec.last_anchor_at != null
+              ? Math.max(0, Math.floor(Date.now() / 1000) - rec.last_anchor_at)
+              : undefined,
+          presence_timestamp_ms: rec.timestamp * 1000,
+          reachable_probe_at: probeCache?.[rec.peer_id],
+          trust_score: 0,
+        });
+      }
+    }
+
+    // Compute scores and sort desc.
+    const out: KnownNode[] = [];
+    for (const node of merged.values()) {
+      node.trust_score = computeTrustScore(node);
+      out.push(node);
+    }
+    out.sort((a, b) => b.trust_score - a.trust_score);
+    return out;
   }
 
   /** GET /api/v1/news/:msgId — single news post with comments. */
@@ -872,6 +1042,30 @@ export class OgmaraClient {
         }
       }
 
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+      return resp.json();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Like `get`, but takes a fully-qualified URL instead of a path so
+   * the caller can target a node other than `this.nodeUrl`. Used by
+   * `getNetworkIdentity(url?)` for the consumer-side reachability
+   * probe in spec 13 §10.9.
+   *
+   * No auth headers, no PoW retry — probes are public read-only and
+   * shouldn't burn the caller's PoW budget on a target node.
+   */
+  private async getAbsolute<T>(url: string): Promise<T> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);

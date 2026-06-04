@@ -5,6 +5,30 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-06-04
+
+### Added
+
+- On-chain node discovery: `discoverNodesViaSc(network)` and
+  `discoverNodeUrlsViaSc(network)` enumerate registered Ogmara nodes
+  directly from the KApp on Klever (`getActiveNodes` → `getNodeMetadata`
+  → derived HTTPS endpoint) with **no hardcoded seed node**. Plus
+  `SC_NETWORKS` (mainnet/testnet RPC + SC addresses) and the
+  `ScNetwork` / `ScNetworkConfig` / `ScDiscoveredNode` /
+  `ScDiscoveryOptions` types. This is the decentralized replacement for
+  the `DEFAULT_NODE_URL` seed — a single point of failure when
+  `node.ogmara.org` is down. Ported (behaviourally identical) from the
+  website's proven `sc_bootstrap.js`; includes the SSRF guard that
+  strips loopback / RFC1918 / CGNAT / link-local / `.local` hosts from
+  on-chain multiaddrs. Validated against live testnet (discovers the
+  registered fleet) and covered by unit tests.
+
+### Deprecated
+
+- `DEFAULT_NODE_URL` (`https://node.ogmara.org`) is retained for
+  backward compatibility but should no longer be relied on as a seed —
+  prefer SC discovery. `node.ogmara.org` is not currently a live node.
+
 ## [0.20.0] - 2026-06-04
 
 ### Added

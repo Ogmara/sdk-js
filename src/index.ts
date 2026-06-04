@@ -57,3 +57,14 @@ export {
   CHANNEL_TYPE_PRIVATE,
 } from './utils';
 export type { TextSegment, NodeWithPing } from './utils';
+export {
+  discoverNodesViaSc,
+  discoverNodeUrlsViaSc,
+  SC_NETWORKS,
+} from './sc_discovery';
+export type {
+  ScNetwork,
+  ScNetworkConfig,
+  ScDiscoveredNode,
+  ScDiscoveryOptions,
+} from './sc_discovery';

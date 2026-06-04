@@ -5,6 +5,20 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-06-04
+
+### Added
+
+- `Health.media_uploads?: boolean` — the node's live media capability
+  (IPFS configured AND the Kubo daemon reachable), reported by
+  `/api/v1/health` on l2-node 0.48.7+. A node can be configured-but-
+  offline (text-only deployment), so this is a live signal, not a static
+  flag. Optional: older nodes omit it (`undefined`), which clients should
+  treat as "unknown → assume available" to preserve prior behavior.
+  Clients use it to disable the upload UI and render a friendly
+  "hosted on another node" placeholder instead of failing on upload or
+  showing broken images.
+
 ## [0.19.0] - 2026-06-01
 
 Presence-gossip consumer surface — spec 13 §10 + spec 5 §1.1. Lands

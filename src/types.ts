@@ -135,6 +135,19 @@ export interface Health {
   status: string;
   version: string;
   peers: number;
+  /**
+   * Whether this node can currently accept media uploads and serve media
+   * — i.e. an IPFS backend is configured AND reachable (l2-node 0.48.7+).
+   * A node may be configured-but-offline (the Kubo daemon isn't running,
+   * e.g. a text-only deployment), so this is a live capability signal,
+   * not a static flag. Clients should disable the attach/upload UI and
+   * tell the user to switch to a media-capable node when this is `false`,
+   * and render a friendly "hosted on another node" placeholder for images
+   * that fail to load. Older nodes omit the field → `undefined`, which
+   * clients should treat as "unknown" and assume available (preserves
+   * prior behavior). Read it via `client.health()`.
+   */
+  media_uploads?: boolean;
 }
 
 /** Anchor verification status for a network node. */

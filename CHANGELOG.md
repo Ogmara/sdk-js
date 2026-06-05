@@ -5,6 +5,20 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-06-05
+
+### Added
+
+- **`registerDevice` now co-signs the device claim (P-0 dual-signed
+  delegation, node 0.49.0+).** In addition to the wallet's claim signature,
+  the device key automatically signs the SAME canonical claim string as a
+  proof-of-possession and sends it as `device_signature`. This lets the node
+  gossip a free, unforgeable device→wallet delegation to all peers (no
+  on-chain transaction) — so the mapping follows the user to any node. No
+  caller change: the device signature is derived from the signer the client
+  already holds. `RegisterDeviceRequest` gained the optional `device_signature`
+  field.
+
 ## [0.21.0] - 2026-06-04
 
 ### Added

@@ -620,6 +620,14 @@ export interface RegisterDeviceRequest {
   wallet_address: string;
   wallet_signature: string;
   timestamp: number;
+  /**
+   * Device proof-of-possession: the device key's Ed25519 signature (Klever
+   * message format, hex) over the SAME claim string the wallet signed. Sent
+   * by `registerDevice`; the node verifies wallet + device signatures and,
+   * when both pass, gossips a free, unforgeable dual-signed delegation
+   * (P-0, node 0.49.0+).
+   */
+  device_signature?: string;
 }
 
 /** Response from device registration. */

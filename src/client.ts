@@ -947,6 +947,14 @@ export class OgmaraClient {
    * Submits a wallet-signed claim that binds the device key to the wallet.
    * The claim must be signed by the wallet (via extension or K5).
    *
+   * The device key automatically co-signs the SAME claim string as a
+   * **proof-of-possession** (P-0 dual-signed delegation, node 0.49.0+). With
+   * both signatures the node can gossip a delegation that every peer verifies
+   * itself (the wallet authorizes the binding; the device proves it holds the
+   * key), so the device→wallet mapping reaches all nodes for **free** — no
+   * on-chain transaction — and is unforgeable: impersonating a wallet needs
+   * the wallet key, hijacking a device needs the device key.
+   *
    * @param walletSignatureHex - Hex-encoded wallet signature over the claim string
    * @param walletAddress - The wallet's klv1... address
    * @param timestamp - The timestamp used in the claim string
@@ -957,11 +965,24 @@ export class OgmaraClient {
     timestamp: number,
   ): Promise<RegisterDeviceResponse> {
     if (!this.signer) throw new Error('Signer required');
+
+    // Reconstruct the EXACT canonical claim the wallet signed (lowercase
+    // device pubkey — see buildDeviceClaim) and co-sign it with the device key.
+    const devicePubkeyHex = this.signer.publicKeyHex.toLowerCase();
+    const claimString = `ogmara-device-claim:${devicePubkeyHex}:${walletAddress}:${timestamp}`;
+    const deviceSigBytes = await this.signer.signKleverMessage(
+      new TextEncoder().encode(claimString),
+    );
+    const deviceSignatureHex = Array.from(deviceSigBytes, (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+
     const result = await this.postJson<RegisterDeviceResponse>('/api/v1/devices/register', {
       device_pubkey_hex: this.signer.publicKeyHex,
       wallet_address: walletAddress,
       wallet_signature: walletSignatureHex,
       timestamp,
+      device_signature: deviceSignatureHex,
     } satisfies RegisterDeviceRequest);
     // Auto-set walletAddress on the signer after successful registration
     if (result.ok) {

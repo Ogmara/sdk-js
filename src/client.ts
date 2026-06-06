@@ -203,6 +203,19 @@ export class OgmaraClient {
     return this.get(`/api/v1/channels/${channelId}`);
   }
 
+  /** GET /api/v1/channels/by-slug/:slug — resolve a channel by slug.
+   *  Returns the channel metadata (incl. `channel_id`), or null if the node
+   *  doesn't know it yet (404). Lets the web learn a freshly-created channel's
+   *  SC-assigned id by polling the node — no direct Klever RPC call (CORS). */
+  async getChannelBySlug(slug: string): Promise<{ channel_id: number } & Record<string, unknown> | null> {
+    try {
+      return await this.get(`/api/v1/channels/by-slug/${encodeURIComponent(slug)}`);
+    } catch (e: any) {
+      if (typeof e?.message === 'string' && e.message.includes('404')) return null;
+      throw e;
+    }
+  }
+
   /** GET /api/v1/channels/:channelId/messages
    *  `after` returns messages newer than the given msg_id (incremental fetch).
    *  `before` and `after` are mutually exclusive; `after` takes precedence.

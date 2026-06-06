@@ -5,6 +5,16 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-06-06
+
+### Added
+
+- `client.getChannelBySlug(slug)` — resolve a channel by slug via the node's
+  `GET /api/v1/channels/by-slug/:slug` (returns the channel metadata incl.
+  `channel_id`, or `null` on 404). Lets clients learn a freshly-created
+  channel's id by polling the node instead of querying Klever's SC RPC directly
+  (CORS-blocked in browsers).
+
 ## [0.22.0] - 2026-06-05
 
 ### Added

@@ -5,6 +5,18 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.1] - 2026-06-07
+
+### Fixed
+
+- **Build portability.** Replaced the `@noble/curves` dependency with a vendored,
+  dependency-free X25519 (RFC 7748, verified against the spec's official test
+  vectors). `@noble/curves/ed25519` is a package `exports` subpath whose types fail
+  to resolve under older TypeScript (DTS build error TS2307), and as a transitive
+  dep of this `file:`-linked package it wasn't present in consumer node_modules —
+  both broke the production web/SDK build. The vendored module resolves everywhere
+  and needs no consumer changes.
+
 ## [0.24.0] - 2026-06-07
 
 ### Added

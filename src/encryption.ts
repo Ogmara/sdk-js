@@ -9,7 +9,7 @@
  * wallet signatures across wallet encodings, and builds the WALLET-authored
  * `DeviceEncBinding` / `DeviceEncRevoke` envelopes the L2 node verifies.
  */
-import { x25519 } from '@noble/curves/ed25519';
+import { getPublicKey as x25519GetPublicKey, randomPrivateKey as x25519Random } from './x25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { encode } from '@msgpack/msgpack';
 import { MessageType } from './types';
@@ -55,13 +55,13 @@ export interface DeviceEncKeypair {
 
 /** Generate a fresh device X25519 encryption keypair. */
 export function generateDeviceEncKeypair(): DeviceEncKeypair {
-  const privateKey = x25519.utils.randomPrivateKey();
-  return { privateKey, publicKeyHex: toHex(x25519.getPublicKey(privateKey)) };
+  const privateKey = x25519Random();
+  return { privateKey, publicKeyHex: toHex(x25519GetPublicKey(privateKey)) };
 }
 
 /** Recover the public key hex from a stored 32-byte X25519 secret key. */
 export function encPublicKeyHex(privateKey: Uint8Array): string {
-  return toHex(x25519.getPublicKey(privateKey));
+  return toHex(x25519GetPublicKey(privateKey));
 }
 
 // --- wallet signature normalization ----------------------------------------

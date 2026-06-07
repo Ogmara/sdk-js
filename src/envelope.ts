@@ -83,6 +83,8 @@ const MSG_TYPE_NAME: Record<number, string> = {
   [MessageType.SettingsSync]: 'SettingsSync',
   [MessageType.Follow]: 'Follow',
   [MessageType.Unfollow]: 'Unfollow',
+  [MessageType.DeviceEncBinding]: 'DeviceEncBinding',
+  [MessageType.DeviceEncRevoke]: 'DeviceEncRevoke',
   [MessageType.Report]: 'Report',
   [MessageType.CounterVote]: 'CounterVote',
   [MessageType.ChannelMute]: 'ChannelMute',

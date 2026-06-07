@@ -349,6 +349,8 @@ export const MessageType = {
   ChannelMute: 0x42,
   Follow: 0x34,
   Unfollow: 0x35,
+  DeviceEncBinding: 0x36,
+  DeviceEncRevoke: 0x37,
   DeletionRequest: 0x50,
   // Channel Administration
   ChannelAddModerator: 0x14,
@@ -655,6 +657,22 @@ export interface ListDevicesResponse {
 export interface RevokeDeviceResponse {
   ok: boolean;
   device_address: string;
+}
+
+/** A device encryption-key directory record (E2E P0, protocol §2.4). */
+export interface DeviceEncKeyRecord {
+  /** Device X25519 encryption public key, hex (32 bytes). */
+  enc_pub: string;
+  /** Device Ed25519 signing public key, hex (32 bytes). */
+  device_id: string;
+  /** Unix ms when the binding was authorized. */
+  created_at: number;
+}
+
+/** Response from `GET /api/v1/users/{address}/enc-keys`. */
+export interface EncKeysResponse {
+  address: string;
+  keys: DeviceEncKeyRecord[];
 }
 
 // --- v0.11.0 Message Action types ---

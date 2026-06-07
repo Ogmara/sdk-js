@@ -5,6 +5,25 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0] - 2026-06-07
+
+### Added
+
+- **Device encryption keys (E2E P0, protocol §2.4)** — new `encryption` module:
+  - `generateDeviceEncKeypair()` / `encPublicKeyHex()` — per-device X25519 keypair
+    (distinct from the Ed25519 signing key); the private key stays on the device.
+  - `buildDeviceEncBinding()` / `buildDeviceEncRevoke()` — build the **wallet-authored**
+    `DeviceEncBinding` (0x36) / `DeviceEncRevoke` (0x37) envelopes (author = wallet,
+    `msg_id` keyed to the wallet pubkey, signature = wallet `signMessage` over the
+    canonical claim). `encBindClaim()` / `encRevokeClaim()` expose the exact claim.
+  - `OgmaraClient.getEncKeys(address)` (GET) and `publishEncKeyEnvelope(wallet, bytes)`
+    (POST `/api/v1/users/{address}/enc-keys`).
+- **`normalizeWalletSig()`** — canonicalizes a wallet `signMessage` return (Klever
+  Extension hex / K5 base64-of-hex / raw bytes) into the 64 raw Ed25519 signature
+  bytes. Fixes a latent bug where K5's base64-of-hex failed the `/^[0-9a-f]{128}$/`
+  check in clients. Required so signature-derived values reproduce across wallets.
+- New dependency `@noble/curves` (X25519).
+
 ## [0.23.0] - 2026-06-06
 
 ### Added

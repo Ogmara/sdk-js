@@ -98,6 +98,7 @@ import type {
   RegisterDeviceResponse,
   RevokeDeviceResponse,
   ListDevicesResponse,
+  EncKeysResponse,
   ChatEditData,
   ChatDeleteData,
   ChatReactionData,
@@ -1014,6 +1015,30 @@ export class OgmaraClient {
   /** List all devices registered to the authenticated wallet. */
   async listDevices(): Promise<ListDevicesResponse> {
     return this.getAuthenticated<ListDevicesResponse>('/api/v1/devices');
+  }
+
+  /**
+   * Fetch a wallet's active device encryption keys (E2E P0, protocol §2.4).
+   * Public X25519 key material — used by a sender to wrap message keys to each
+   * of a recipient's devices.
+   */
+  async getEncKeys(address: string): Promise<EncKeysResponse> {
+    return this.getAuthenticated<EncKeysResponse>(
+      `/api/v1/users/${encodeURIComponent(address)}/enc-keys`,
+    );
+  }
+
+  /**
+   * Publish a wallet-authored `DeviceEncBinding`/`DeviceEncRevoke` envelope
+   * (build it with `buildDeviceEncBinding` / `buildDeviceEncRevoke`). The
+   * envelope's wallet signature is the authority; the HTTP request is
+   * device-authenticated like any other.
+   */
+  async publishEncKeyEnvelope(walletAddress: string, envelopeBytes: Uint8Array): Promise<unknown> {
+    return this.postEnvelope(
+      `/api/v1/users/${encodeURIComponent(walletAddress)}/enc-keys`,
+      envelopeBytes,
+    );
   }
 
   /** Discover nodes from the current home node for failover. */

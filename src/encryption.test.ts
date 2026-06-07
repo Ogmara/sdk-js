@@ -11,6 +11,29 @@ import {
   encBindClaim,
   buildDeviceEncBinding,
 } from './encryption';
+import { scalarMult, getPublicKey } from './x25519';
+
+const fromHex = (h: string): Uint8Array => {
+  const o = new Uint8Array(h.length / 2);
+  for (let i = 0; i < o.length; i++) o[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  return o;
+};
+
+describe('x25519 (RFC 7748 vectors)', () => {
+  it('matches the §5.2 scalar-multiplication test vector', () => {
+    const k = fromHex('a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4');
+    const u = fromHex('e6db6867583030db3594c1a424b15f7c726624ec26b3353b10a903a6d0ab1c4c');
+    expect(toHex(scalarMult(k, u))).toBe(
+      'c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552',
+    );
+  });
+  it('matches the §6.1 keypair test vector (Alice)', () => {
+    const priv = fromHex('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
+    expect(toHex(getPublicKey(priv))).toBe(
+      '8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a',
+    );
+  });
+});
 
 const toHex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 const utf8 = (s: string) => new TextEncoder().encode(s);

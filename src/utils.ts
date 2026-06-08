@@ -5,6 +5,7 @@
  */
 
 import type { AnchorStatus, Channel } from './types';
+import { isPrivateIpv4, isPrivateIpv6, isPrivateDnsName } from './sc_discovery';
 
 /** Default production node. */
 export const DEFAULT_NODE_URL = 'https://node.ogmara.org';
@@ -186,20 +187,6 @@ export function applyFormatting(
 // --- Node discovery helpers ---
 
 /** Private/reserved IP ranges that must be blocked to prevent SSRF. */
-const BLOCKED_HOST_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^0\./,
-  /^\[::1\]/,
-  /^\[fc/i,
-  /^\[fd/i,
-  /^\[fe80/i,
-];
-
 /** Options for {@link validateNodeUrl}. */
 export interface ValidateNodeUrlOptions {
   /**
@@ -232,22 +219,34 @@ export function validateNodeUrl(
   options: ValidateNodeUrlOptions = {},
 ): string | null {
   try {
+    // Reasonable length limit (before parse).
+    if (url.length > 256) return null;
     const parsed = new URL(url);
-    // Only allow http/https schemes
+    // Only allow http/https schemes.
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       return null;
     }
     if (!options.allowPrivateHosts) {
-      // Block private/reserved IPs (web default — SSRF mitigation).
-      const host = parsed.hostname;
-      for (const pattern of BLOCKED_HOST_PATTERNS) {
-        if (pattern.test(host)) {
-          return null;
-        }
+      // Web / SSRF-sensitive mode (audit 2026-06-07 B4.2):
+      //  1. Require https — no plaintext downgrade for a remote node.
+      if (parsed.protocol !== 'https:') return null;
+      //  2. Reject private / reserved hosts. `parsed.hostname` is already
+      //     WHATWG-canonicalized, so decimal/hex/octal IPv4 (e.g.
+      //     `http://2130706433`) and IPv4-mapped IPv6 are normalized to a
+      //     form the structured checks below catch — defeating the
+      //     string-blocklist bypasses the old regex set missed. The checks
+      //     are shared with the SC-discovery dial path (`sc_discovery.ts`).
+      let host = parsed.hostname.toLowerCase();
+      if (host.startsWith('[') && host.endsWith(']')) {
+        if (isPrivateIpv6(host.slice(1, -1))) return null;
+      } else if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+        if (isPrivateIpv4(host)) return null;
+      } else if (isPrivateDnsName(host)) {
+        return null;
       }
+      // A public DNS name passes here; DNS-rebinding at fetch time is a
+      // residual the browser/dialer must handle (documented).
     }
-    // Reasonable length limit
-    if (url.length > 256) return null;
     return parsed.origin;
   } catch {
     return null;

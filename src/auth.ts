@@ -21,6 +21,35 @@ export interface AuthHeaders {
   'x-ogmara-auth': string;
   'x-ogmara-address': string;
   'x-ogmara-timestamp': string;
+  'x-ogmara-nonce': string;
+}
+
+/**
+ * The node identity an auth signature is bound to (audit 2026-06-07
+ * host-binding). Fetched once from `GET /api/v1/health` and cached by the
+ * client. Binding the signature to `{network, nodeId}` means a captured
+ * header cannot be replayed against a different node or network.
+ */
+export interface NodeBinding {
+  /** Klever network ("testnet" / "mainnet"), from `/health`. */
+  network: string;
+  /** Target node's Ogmara `node_id`, from `/health`. */
+  nodeId: string;
+}
+
+/** Generate a random single-use nonce as a lowercase hex string. */
+export function randomNonceHex(byteLen = 16): string {
+  const buf = new Uint8Array(byteLen);
+  // `globalThis.crypto` is present in browsers, Node 18+, Deno, and
+  // workers. We deliberately do NOT fall back to Math.random — a weak
+  // nonce would let an attacker pre-compute collisions and defeat the
+  // replay cache.
+  const c = globalThis.crypto;
+  if (!c?.getRandomValues) {
+    throw new Error('secure crypto.getRandomValues unavailable — cannot mint auth nonce');
+  }
+  c.getRandomValues(buf);
+  return bytesToHex(buf);
 }
 
 /**
@@ -93,18 +122,65 @@ export class WalletSigner {
     return this.walletAddress ? this.deviceAddress : this.address;
   }
 
-  /** Build auth headers for an API request. */
-  async signRequest(method: string, path: string): Promise<AuthHeaders> {
+  /**
+   * Build auth headers for an API request.
+   *
+   * The signature is bound to the target node's `{network, nodeId}` plus a
+   * fresh single-use `nonce` (audit 2026-06-07 host-binding), so a captured
+   * header is neither portable to another node nor replayable to this one.
+   */
+  async signRequest(method: string, path: string, binding: NodeBinding): Promise<AuthHeaders> {
     const timestamp = Date.now();
     // Sign path without query string — server verifies req.uri().path() only
     const pathOnly = path.split('?')[0];
-    const authString = `ogmara-auth:${timestamp}:${method}:${pathOnly}`;
+    const nonce = randomNonceHex();
+    const authString =
+      `ogmara-auth:${binding.network}:${binding.nodeId}:${nonce}:${timestamp}:${method}:${pathOnly}`;
     const signature = await this.signKleverMessage(new TextEncoder().encode(authString));
 
     return {
       'x-ogmara-auth': btoa(String.fromCharCode(...signature)),
       'x-ogmara-address': this.signingAddress,
       'x-ogmara-timestamp': timestamp.toString(),
+      'x-ogmara-nonce': nonce,
+    };
+  }
+
+  /**
+   * Sign a push-gateway registration claim (audit 2026-06-07 C1/C3).
+   *
+   * The push gateway is a separate service (no node_id), so registration is
+   * bound to the gateway's host + a single-use nonce + the exact `token` being
+   * registered. The signed string is:
+   *   `ogmara-push:{action}:{gatewayHost}:{nonce}:{timestamp}:{address}:{token}`
+   * The gateway requires the signing address to equal the registered address,
+   * so `address` here is this signer's `signingAddress` and callers MUST send
+   * that same value as the request body's `address`.
+   *
+   * @param action - "register" or "unregister"
+   * @param gatewayHost - the gateway URL the client POSTs to (trailing slash stripped)
+   * @param token - the exact push token string sent in the request body
+   * @returns the auth headers plus the `address` to put in the body
+   */
+  async signPushClaim(
+    action: 'register' | 'unregister',
+    gatewayHost: string,
+    token: string,
+  ): Promise<{ headers: AuthHeaders; address: string }> {
+    const timestamp = Date.now();
+    const nonce = randomNonceHex();
+    const address = this.signingAddress;
+    const host = gatewayHost.replace(/\/$/, '');
+    const claim = `ogmara-push:${action}:${host}:${nonce}:${timestamp}:${address}:${token}`;
+    const signature = await this.signKleverMessage(new TextEncoder().encode(claim));
+    return {
+      headers: {
+        'x-ogmara-auth': btoa(String.fromCharCode(...signature)),
+        'x-ogmara-address': address,
+        'x-ogmara-timestamp': timestamp.toString(),
+        'x-ogmara-nonce': nonce,
+      },
+      address,
     };
   }
 
@@ -221,7 +297,12 @@ function devicePubkeyToAddress(pubkey: Uint8Array): string {
 }
 
 function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0) throw new Error('Invalid hex string');
+  // Validate charset + even length BEFORE parsing: `parseInt` on a non-hex
+  // pair returns NaN → silently coerced to 0, producing a *different*
+  // keypair/signature instead of an error (audit 2026-06-07 W4).
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error('Invalid hex string');
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
     bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);

@@ -17,7 +17,7 @@
  * ```
  */
 
-import type { WalletSigner } from './auth';
+import type { WalletSigner, AuthHeaders, NodeBinding } from './auth';
 import type { PowChallenge } from './pow';
 import { solveChallengeAsync } from './pow';
 import {
@@ -151,6 +151,13 @@ export class OgmaraClient {
   private timeout: number;
   private signer?: WalletSigner;
   private knownNodes: string[] = [];
+
+  /**
+   * Cached node identity (network + node_id) the auth signatures bind to
+   * (audit 2026-06-07 host-binding). Fetched lazily from `/api/v1/health`
+   * the first time an authenticated request is signed, then reused.
+   */
+  private nodeBinding?: NodeBinding;
 
   /** Whether this client's wallet has been verified (PoW solved or on-chain registered). */
   private powVerified = false;
@@ -612,7 +619,7 @@ export class OgmaraClient {
     const formData = new FormData();
     formData.append('file', file, filename);
 
-    const headers = await this.signer.signRequest('POST', '/api/v1/media/upload');
+    const headers = await this.authHeaders('POST', '/api/v1/media/upload');
     const url = `${this.nodeUrl}/api/v1/media/upload`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -749,7 +756,7 @@ export class OgmaraClient {
   async saveBookmark(msgId: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
     const path = `/api/v1/bookmarks/${encodeURIComponent(msgId)}`;
-    const headers = await this.signer.signRequest('POST', path);
+    const headers = await this.authHeaders('POST', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -771,7 +778,7 @@ export class OgmaraClient {
   /** DELETE /api/v1/bookmarks/:msgId — unsave a post. */
   async removeBookmark(msgId: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('DELETE', `/api/v1/bookmarks/${encodeURIComponent(msgId)}`);
+    const headers = await this.authHeaders('DELETE', `/api/v1/bookmarks/${encodeURIComponent(msgId)}`);
     const url = `${this.nodeUrl}/api/v1/bookmarks/${encodeURIComponent(msgId)}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -792,10 +799,28 @@ export class OgmaraClient {
 
   // --- Channel Administration (authenticated) ---
 
-  /** POST /api/v1/channels/:channelId/moderators — add moderator. */
-  async addModerator(channelId: number, targetUser: string, permissions: ModeratorPermissions): Promise<void> {
+  /**
+   * POST /api/v1/channels/:channelId/moderators — add moderator.
+   *
+   * `permissions` defaults to the standard full moderator set when omitted
+   * (audit 2026-06-07 B4.1 — the "promote to moderator" UI has no per-permission
+   * picker); pass an explicit set to grant a narrower role.
+   */
+  async addModerator(
+    channelId: number,
+    targetUser: string,
+    permissions?: ModeratorPermissions,
+  ): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildAddModerator(this.signer, { channelId, targetUser, permissions });
+    const perms: ModeratorPermissions = permissions ?? {
+      can_mute: true,
+      can_kick: true,
+      can_ban: true,
+      can_pin: true,
+      can_edit_info: true,
+      can_delete_msgs: true,
+    };
+    const envelope = await buildAddModerator(this.signer, { channelId, targetUser, permissions: perms });
     await this.postEnvelope(`/api/v1/channels/${channelId}/moderators`, envelope);
   }
 
@@ -1051,9 +1076,40 @@ export class OgmaraClient {
 
   // --- Internal helpers ---
 
+  /**
+   * Resolve (and cache) the node identity that auth signatures bind to.
+   * Fetched unauthenticated from `/api/v1/health` — it must NOT route
+   * through the auth path, which itself depends on this binding.
+   */
+  private async getNodeBinding(): Promise<NodeBinding> {
+    if (this.nodeBinding) return this.nodeBinding;
+    const health = await this.getAbsolute<Health>(`${this.nodeUrl}/api/v1/health`);
+    if (!health.node_id || !health.network) {
+      throw new Error(
+        'node /health did not return node_id/network — node too old for host-bound auth',
+      );
+    }
+    this.nodeBinding = { network: health.network, nodeId: health.node_id };
+    return this.nodeBinding;
+  }
+
+  /**
+   * Sign auth headers for `method path`, binding to this node's identity
+   * (audit 2026-06-07 host-binding). Public so callers that must issue the
+   * request themselves — e.g. a Tauri/native fetch for large bodies, or a
+   * multipart upload — can obtain correctly host-bound, nonce'd headers
+   * without reaching into the signer. The `path` should be the request path
+   * (query string is stripped before signing, matching the node verifier).
+   */
+  async authHeaders(method: string, path: string): Promise<AuthHeaders> {
+    if (!this.signer) throw new Error('Signer required');
+    const binding = await this.getNodeBinding();
+    return this.signer.signRequest(method, path, binding);
+  }
+
   private async getAuthenticated<T>(path: string): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('GET', path);
+    const headers = await this.authHeaders('GET', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -1086,10 +1142,18 @@ export class OgmaraClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      // Send auth headers when available (for optional-auth endpoints like channels list)
-      const headers = this.signer
-        ? { ...await this.signer.signRequest('GET', path) }
-        : {} as Record<string, string>;
+      // Send auth headers when available (for optional-auth endpoints like
+      // channels list). This is best-effort: if the node binding can't be
+      // fetched (e.g. an old node without node_id in /health), proceed
+      // unauthenticated rather than failing the public read.
+      let headers: Record<string, string> = {};
+      if (this.signer) {
+        try {
+          headers = { ...await this.authHeaders('GET', path) };
+        } catch {
+          headers = {};
+        }
+      }
       const resp = await fetch(url, { headers, signal: controller.signal });
 
       // Handle PoW challenge: auto-solve and retry once
@@ -1139,7 +1203,7 @@ export class OgmaraClient {
   private async postEnvelope<T>(path: string, envelopeBytes: Uint8Array): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
 
-    const headers = await this.signer.signRequest('POST', path);
+    const headers = await this.authHeaders('POST', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -1178,7 +1242,7 @@ export class OgmaraClient {
   /** PUT with envelope bytes (MessagePack binary body). */
   private async putEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('PUT', path);
+    const headers = await this.authHeaders('PUT', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -1212,7 +1276,7 @@ export class OgmaraClient {
   /** DELETE with envelope bytes (MessagePack binary body). */
   private async deleteEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('DELETE', path);
+    const headers = await this.authHeaders('DELETE', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -1246,7 +1310,7 @@ export class OgmaraClient {
   /** POST with JSON body (for non-envelope endpoints like device registration). */
   private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('POST', path);
+    const headers = await this.authHeaders('POST', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -1281,7 +1345,7 @@ export class OgmaraClient {
   /** DELETE with auth headers (no body). */
   private async deleteAuthenticated<T>(path: string): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
-    const headers = await this.signer.signRequest('DELETE', path);
+    const headers = await this.authHeaders('DELETE', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);

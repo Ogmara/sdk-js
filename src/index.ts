@@ -26,8 +26,8 @@
  */
 
 export { OgmaraClient } from './client';
-export { WalletSigner, buildDeviceClaim } from './auth';
-export type { ExternalSigner, AuthHeaders } from './auth';
+export { WalletSigner, buildDeviceClaim, randomNonceHex } from './auth';
+export type { ExternalSigner, AuthHeaders, NodeBinding } from './auth';
 export {
   generateDeviceEncKeypair,
   encPublicKeyHex,

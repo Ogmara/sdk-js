@@ -5,6 +5,84 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0] - 2026-06-08
+
+Correctness + transport hardening (audit 2026-06-07 fix-plan Batch 4).
+
+### Security
+
+- **`validateNodeUrl` SSRF hardening (B4.2).** Replaced the bypassable
+  string-blocklist with structured checks on the WHATWG-canonicalized hostname
+  (catches decimal/hex/octal IPv4, IPv4-mapped IPv6, CGNAT, etc., shared with
+  the SC-discovery dial path), and now **requires https in web mode** (no
+  plaintext downgrade). `allowPrivateHosts: true` (desktop/mobile) still permits
+  LAN/loopback + http.
+- **WebSocket TLS enforcement (B4.3 W2).** The WS client refuses cleartext
+  `ws://` to a non-loopback host (the first frame is the auth credential) — use
+  `wss://`. New `WsOptions.onError` surfaces the refusal. Loopback ws:// still
+  allowed for dev.
+- **WS robustness (B4.3 W1/W3).** Reconnects fully tear down the prior socket
+  (no stale-handler / double-timer races); inbound frames over ~1 MiB are
+  dropped before `JSON.parse`.
+
+### Added
+
+- `OgmaraClient.authHeaders(method, path)` was added in 0.25.0; `Envelope` now
+  carries the node's enriched read fields (`channel_id`, `target_msg_id`,
+  `emoji`, `remove`, `reactions`, `reaction_counts`, `deleted`, `edited`);
+  `NetworkStats.network`, `Channel.logo_cid`, `ChannelDetailResponse.member_count`
+  added (B4.1 — aligns the `.d.ts` with the node's output, clearing 30 web/
+  desktop tsc errors).
+
+### Changed
+
+- `WalletSigner` `addModerator`'s `permissions` arg (via `OgmaraClient`) is now
+  **optional**, defaulting to the full standard moderator set (B4.1 — fixes the
+  2-arg call sites in web/desktop). Exported `randomNonceHex`, `resolveWsUrl`,
+  `isPrivateIpv4/Ipv6/DnsName`.
+
+## [0.25.0] - 2026-06-08
+
+### Security
+
+- **X25519 crypto hardening (audit C2/W4, fix-plan B2.1 — E2E prerequisite).**
+  The vendored X25519 Montgomery ladder now uses a BRANCHLESS constant-time
+  conditional swap (removing the secret-dependent `if (swap===1n)` timing leak);
+  `getSharedSecret` validates the 32-byte key lengths and rejects an all-zero /
+  low-order shared secret (RFC 7748 §6.1) so a malicious peer key can't force an
+  attacker-predictable secret. `hexToBytes` in `auth.ts` and `encryption.ts` now
+  validate the hex charset + even length and throw, instead of `parseInt`
+  silently coercing bad input to a *different* key/signature. (BigInt limb math
+  remains variable-time — documented residual; not in the client threat model.)
+- **Auth host-binding (audit C1, fix-plan B1.3).** `WalletSigner.signRequest`
+  now binds each auth signature to the target node's `{network, nodeId}` plus a
+  fresh single-use `nonce`, signing
+  `ogmara-auth:{network}:{nodeId}:{nonce}:{timestamp}:{method}:{path}` and
+  emitting a new `x-ogmara-nonce` header. A captured header can no longer be
+  replayed against another node/network or reused on the same node. The
+  `OgmaraClient` lazily fetches and caches the node identity from
+  `GET /api/v1/health` (now returns `node_id`/`network`); the WS client does the
+  same and includes the nonce in its auth frame. Requires l2-node ≥0.61.0.
+
+### Added
+
+- `OgmaraClient.authHeaders(method, path)` (public) — returns host-bound,
+  nonce'd auth headers for callers that must issue the request themselves
+  (native/Tauri fetch for large bodies, multipart uploads) instead of reaching
+  into the signer.
+- `WalletSigner.signPushClaim(action, gatewayHost, token)` — signs a
+  push-gateway registration/unregistration claim bound to the gateway host + a
+  single-use nonce + the exact token (audit C1/C2/C3). Returns the auth headers
+  plus the address to send in the request body.
+
+### Changed
+
+- **BREAKING:** `WalletSigner.signRequest(method, path)` →
+  `signRequest(method, path, binding)` where `binding: NodeBinding` is
+  `{ network, nodeId }`. `AuthHeaders` gains `x-ogmara-nonce`. New exports:
+  `NodeBinding`, `randomNonceHex`. Most consumers use the higher-level
+  `OgmaraClient`/`subscribe` and need no changes.
+
 ## [0.24.1] - 2026-06-07
 
 ### Fixed

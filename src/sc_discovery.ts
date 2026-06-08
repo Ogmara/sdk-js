@@ -196,7 +196,7 @@ function bech32EncodeKlv(rawBytes: Uint8Array): string {
 
 // ── Multiaddr host extraction (with SSRF guard) ───────────────────────
 
-function isPrivateIpv4(ip: string): boolean {
+export function isPrivateIpv4(ip: string): boolean {
   const parts = ip.split('.');
   if (parts.length !== 4) return false;
   const o = parts.map((p) => parseInt(p, 10));
@@ -219,7 +219,7 @@ function ipv4FromHextets(h1: number, h2: number): string {
   return [(h1 >> 8) & 0xff, h1 & 0xff, (h2 >> 8) & 0xff, h2 & 0xff].join('.');
 }
 
-function isPrivateIpv6(ip: string): boolean {
+export function isPrivateIpv6(ip: string): boolean {
   let s = String(ip || '').toLowerCase().trim();
   if (!s) return true;
   const pct = s.indexOf('%'); // strip zone id
@@ -251,7 +251,7 @@ function isPrivateIpv6(ip: string): boolean {
   return false;
 }
 
-function isPrivateDnsName(name: string): boolean {
+export function isPrivateDnsName(name: string): boolean {
   const s = String(name || '').toLowerCase();
   if (!s) return true;
   if (s === 'localhost' || s.endsWith('.localhost')) return true;

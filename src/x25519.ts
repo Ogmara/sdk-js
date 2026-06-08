@@ -9,8 +9,14 @@
  * `encryption.test.ts`. Used for device encryption keypairs (protocol §2.4) and,
  * later, X25519 Diffie-Hellman (P1).
  *
- * Note: BigInt-based, not constant-time. Adequate for keypair generation and the
- * key-wrap DH in this SDK; not intended to defend against local timing attackers.
+ * Timing: the Montgomery ladder uses a BRANCHLESS constant-time conditional
+ * swap (no secret-dependent control flow). The underlying field arithmetic is
+ * BigInt-based, so individual limb operations are not guaranteed constant-time
+ * — a local timing attacker with high-resolution measurement could in theory
+ * still learn information. This is an accepted residual for a client-side
+ * wallet (no co-resident attacker in the threat model); a fully constant-time
+ * path would require a fixed-width / WASM field implementation. See audit
+ * 2026-06-07 C2.
  */
 
 const P = (1n << 255n) - 19n;
@@ -78,10 +84,17 @@ export function scalarMult(scalar: Uint8Array, uCoord: Uint8Array): Uint8Array {
   for (let t = 254; t >= 0; t--) {
     const kt = (k >> BigInt(t)) & 1n;
     swap ^= kt;
-    if (swap === 1n) {
-      [x2, x3] = [x3, x2];
-      [z2, z3] = [z3, z2];
-    }
+    // Branchless constant-time conditional swap. `mask` is -1n (all ones, via
+    // two's-complement sign-extension) when swap==1, else 0n. `mask & v`
+    // selects v or 0 with no secret-dependent branch; XOR then swaps in place.
+    // This removes the original `if (swap === 1n)` leak (audit 2026-06-07 C2).
+    const mask = -swap;
+    const dx = mask & (x2 ^ x3);
+    x2 ^= dx;
+    x3 ^= dx;
+    const dz = mask & (z2 ^ z3);
+    z2 ^= dz;
+    z3 ^= dz;
     swap = kt;
 
     const a = mod(x2 + z2);
@@ -99,10 +112,13 @@ export function scalarMult(scalar: Uint8Array, uCoord: Uint8Array): Uint8Array {
     z2 = mod(e * mod(aa + mod(A24 * e)));
   }
 
-  if (swap === 1n) {
-    [x2, x3] = [x3, x2];
-    [z2, z3] = [z3, z2];
-  }
+  const finalMask = -swap;
+  const dxf = finalMask & (x2 ^ x3);
+  x2 ^= dxf;
+  x3 ^= dxf;
+  const dzf = finalMask & (z2 ^ z3);
+  z2 ^= dzf;
+  z3 ^= dzf;
 
   return encodeU(mod(x2 * invert(z2)));
 }
@@ -126,7 +142,28 @@ export function randomPrivateKey(): Uint8Array {
   return k;
 }
 
-/** X25519 Diffie-Hellman shared secret (32 bytes) — for P1 key agreement. */
+/**
+ * X25519 Diffie-Hellman shared secret (32 bytes) — for P1 key agreement.
+ *
+ * Validates the peer key length and rejects an all-zero output (RFC 7748
+ * §6.1): a low-order `peerPublicKey` drives the shared secret to zero, which
+ * is attacker-predictable and would silently break the confidentiality of any
+ * key wrapped with it. Callers MUST treat a throw as a hostile/invalid peer
+ * key, never fall back to an unauthenticated path. (audit 2026-06-07 C2)
+ */
 export function getSharedSecret(privateKey: Uint8Array, peerPublicKey: Uint8Array): Uint8Array {
-  return scalarMult(privateKey, peerPublicKey);
+  if (privateKey.length !== 32) {
+    throw new Error(`X25519 private key must be 32 bytes, got ${privateKey.length}`);
+  }
+  if (peerPublicKey.length !== 32) {
+    throw new Error(`X25519 peer public key must be 32 bytes, got ${peerPublicKey.length}`);
+  }
+  const shared = scalarMult(privateKey, peerPublicKey);
+  // Constant-time-ish all-zero check (low-order point → zero shared secret).
+  let acc = 0;
+  for (let i = 0; i < shared.length; i++) acc |= shared[i];
+  if (acc === 0) {
+    throw new Error('X25519 produced an all-zero shared secret (low-order peer key rejected)');
+  }
+  return shared;
 }

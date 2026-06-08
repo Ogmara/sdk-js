@@ -48,6 +48,8 @@ export interface Channel {
   display_name?: string;
   description?: string;
   member_count?: number;
+  /** IPFS CID of the channel logo image (enriched by the node). */
+  logo_cid?: string;
   /**
    * When `true`, the channel renders in threaded mode (top-level posts with
    * grouped replies). When `false` or undefined, the channel is single-post.
@@ -67,6 +69,27 @@ export interface Envelope {
   payload: string; // base64 encoded
   signature: string; // base64 encoded
   relay_path: string[];
+
+  // --- Node-enriched read fields (audit 2026-06-07 B4.1) ---
+  // The node decorates envelopes returned by its read APIs / WS stream with
+  // these extra fields; they are NOT part of the signed wire envelope, so all
+  // are optional. They match the node's enriched JSON output.
+  /** Channel the message belongs to (chat envelopes). */
+  channel_id?: number;
+  /** Target message id for reaction/edit/delete envelopes. */
+  target_msg_id?: string;
+  /** Reaction emoji (reaction envelopes). */
+  emoji?: string;
+  /** Reaction removal flag (reaction envelopes). */
+  remove?: boolean;
+  /** Aggregated chat reactions: emoji → count. */
+  reactions?: Record<string, number>;
+  /** Aggregated news reactions: emoji → count. */
+  reaction_counts?: Record<string, number>;
+  /** Tombstone marker — the referenced message was deleted. */
+  deleted?: boolean;
+  /** Edit marker — the message was edited. */
+  edited?: boolean;
 }
 
 /** Media attachment reference. */
@@ -148,6 +171,17 @@ export interface Health {
    * prior behavior). Read it via `client.health()`.
    */
   media_uploads?: boolean;
+  /**
+   * This node's Ogmara `node_id` (anchorer identity). Used to bind auth
+   * signatures to a specific node (audit 2026-06-07 host-binding). Older
+   * nodes (pre-host-binding) omit it → `undefined`.
+   */
+  node_id?: string;
+  /**
+   * Klever network name ("testnet" / "mainnet"). The other half of the
+   * auth binding. Older nodes omit it → `undefined`.
+   */
+  network?: string;
 }
 
 /** Anchor verification status for a network node. */
@@ -170,6 +204,8 @@ export interface SelfAnchorStatus {
 /** Network stats response. */
 export interface NetworkStats {
   node_id: string;
+  /** Klever network name ("testnet" / "mainnet"). */
+  network?: string;
   peers: number;
   total_messages: number;
   total_channels: number;
@@ -785,4 +821,5 @@ export interface ChannelDetailResponse {
   moderators?: string[];
   pinned_messages?: Envelope[];
   message_count?: number;
+  member_count?: number;
 }

@@ -14,13 +14,26 @@ describe('WalletSigner', () => {
     expect(signer1.address).toBeTruthy();
   });
 
-  it('should produce auth headers', async () => {
+  it('should produce auth headers bound to a node', async () => {
     const signer = await WalletSigner.generate();
-    const headers = await signer.signRequest('GET', '/api/v1/health');
+    const headers = await signer.signRequest('GET', '/api/v1/health', {
+      network: 'testnet',
+      nodeId: 'node-abc',
+    });
 
     expect(headers['x-ogmara-auth']).toBeTruthy();
     expect(headers['x-ogmara-address']).toMatch(/^klv1/);
     expect(parseInt(headers['x-ogmara-timestamp'])).toBeGreaterThan(0);
+    // Host-binding nonce (audit 2026-06-07): present, hex, single-use.
+    expect(headers['x-ogmara-nonce']).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('should mint a fresh nonce per request', async () => {
+    const signer = await WalletSigner.generate();
+    const binding = { network: 'testnet', nodeId: 'node-abc' };
+    const a = await signer.signRequest('GET', '/api/v1/health', binding);
+    const b = await signer.signRequest('GET', '/api/v1/health', binding);
+    expect(a['x-ogmara-nonce']).not.toEqual(b['x-ogmara-nonce']);
   });
 
   it('should compute deterministic msg_id', async () => {

@@ -26,7 +26,12 @@ const toHex = (b: Uint8Array): string =>
 
 function hexToBytes(h: string): Uint8Array {
   const clean = h.toLowerCase();
-  if (clean.length % 2 !== 0) throw new Error('odd-length hex');
+  // Validate BEFORE parsing: `parseInt('zz',16)` returns NaN → silently writes
+  // 0, yielding a *different* key/signature instead of an error — dangerous in
+  // a wallet/identity context (audit 2026-06-07 W4).
+  if (clean.length % 2 !== 0 || !/^[0-9a-f]*$/.test(clean)) {
+    throw new Error('invalid hex string');
+  }
   const out = new Uint8Array(clean.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);

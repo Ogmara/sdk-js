@@ -11,7 +11,7 @@ import {
   encBindClaim,
   buildDeviceEncBinding,
 } from './encryption';
-import { scalarMult, getPublicKey } from './x25519';
+import { scalarMult, getPublicKey, getSharedSecret, randomPrivateKey } from './x25519';
 
 const fromHex = (h: string): Uint8Array => {
   const o = new Uint8Array(h.length / 2);
@@ -32,6 +32,21 @@ describe('x25519 (RFC 7748 vectors)', () => {
     expect(toHex(getPublicKey(priv))).toBe(
       '8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a',
     );
+  });
+  it('computes the §6.1 shared secret (Alice·Bob)', () => {
+    const alicePriv = fromHex('77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a');
+    const bobPub = fromHex('de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f');
+    expect(toHex(getSharedSecret(alicePriv, bobPub))).toBe(
+      '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742',
+    );
+  });
+  it('rejects a low-order peer key (all-zero shared secret, RFC 7748 §6.1)', () => {
+    // The canonical low-order point (order 8): all-zero u-coordinate.
+    const lowOrder = new Uint8Array(32); // 0x00...00
+    expect(() => getSharedSecret(randomPrivateKey(), lowOrder)).toThrow(/all-zero|low-order/i);
+  });
+  it('rejects a wrong-length peer key', () => {
+    expect(() => getSharedSecret(randomPrivateKey(), new Uint8Array(31))).toThrow(/32 bytes/);
   });
 });
 

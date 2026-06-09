@@ -5,6 +5,18 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.1] - 2026-06-09
+
+### Fixed
+
+- **WebSocket reconnect storm.** The reconnect backoff was reset on socket
+  *open*, but a socket that opens then closes almost immediately (auth rejected,
+  or — before l2-node 0.63.2 — a node whose gossip hadn't meshed) turned that
+  into a tight ~1s reconnect loop that hammered the node. The backoff now resets
+  only after the connection stays open ~3s (proven stable), so persistent
+  failures back off properly. Also surfaces the previously-swallowed WS auth
+  error (`[ogmara-ws] WS auth failed`) instead of silently looping.
+
 ## [0.26.0] - 2026-06-08
 
 Correctness + transport hardening (audit 2026-06-07 fix-plan Batch 4).

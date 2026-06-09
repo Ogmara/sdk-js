@@ -101,6 +101,14 @@ export class WsSubscription {
    * (audit 2026-06-07, W1).
    */
   private connecting = false;
+  /**
+   * Fires a few seconds after a socket opens; only then do we treat the
+   * connection as healthy and reset the backoff. A socket that opens but is
+   * closed almost immediately (e.g. the node rejects the auth frame) must NOT
+   * reset the backoff — otherwise a persistent auth failure becomes a tight
+   * reconnect storm that hammers the node (audit 2026-06-07 follow-up).
+   */
+  private stableTimer: ReturnType<typeof setTimeout> | null = null;
   /** Cached node identity the WS auth signature binds to (host-binding). */
   private nodeBinding?: NodeBinding;
 
@@ -139,6 +147,10 @@ export class WsSubscription {
    * socket can't fire after we've moved on (audit 2026-06-07, W1).
    */
   private teardownSocket(): void {
+    if (this.stableTimer) {
+      clearTimeout(this.stableTimer);
+      this.stableTimer = null;
+    }
     const ws = this.ws;
     if (!ws) return;
     this.ws = null;
@@ -208,7 +220,6 @@ export class WsSubscription {
         // Ignore events from a socket we've since replaced/torn down.
         if (this.ws !== ws) return;
         this.connecting = false;
-        this.reconnectAttempts = 0;
         this.options.onStateChange?.(true);
 
         // Send auth message for authenticated WS. The signature is bound to
@@ -221,13 +232,19 @@ export class WsSubscription {
           try {
             const binding = await this.getNodeBinding();
             const headers = await this.options.signer.signRequest('GET', '/api/v1/ws', binding);
+            // The socket may have been replaced while awaiting the binding/sign.
+            if (this.ws !== ws) return;
             this.send({
               address: headers['x-ogmara-address'],
               timestamp: parseInt(headers['x-ogmara-timestamp']),
               signature: headers['x-ogmara-auth'],
               nonce: headers['x-ogmara-nonce'],
             });
-          } catch {
+          } catch (err) {
+            // Surface WHY auth failed instead of silently looping (this was the
+            // blind spot behind the reconnect storm). The backoff is NOT reset
+            // here, so repeated failures back off instead of hammering the node.
+            console.warn('[ogmara-ws] WS auth failed; will reconnect with backoff:', err);
             ws.close(); // triggers onclose → scheduleReconnect
             return;
           }
@@ -242,6 +259,16 @@ export class WsSubscription {
         if (this.options.subscribeDm && this.options.signer) {
           this.send({ type: 'subscribe_dm' });
         }
+
+        // Reset backoff ONLY once the connection has stayed open a few seconds.
+        // If the node rejects auth and closes the socket before this fires, the
+        // backoff is preserved and grows — preventing a tight reconnect storm
+        // (audit 2026-06-07 follow-up; this storm was knocking other clients of
+        // the same node offline).
+        if (this.stableTimer) clearTimeout(this.stableTimer);
+        this.stableTimer = setTimeout(() => {
+          if (this.ws === ws) this.reconnectAttempts = 0;
+        }, 3000);
       };
 
       ws.onmessage = (event) => {

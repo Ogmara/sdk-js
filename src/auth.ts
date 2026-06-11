@@ -86,7 +86,15 @@ export class WalletSigner {
     }
     const publicKey = await ed.getPublicKeyAsync(privateKey);
     const address = pubkeyToAddress(publicKey);
-    return new WalletSigner(privateKey, publicKey, address);
+    // Store a COPY, not the caller's array. Callers legitimately zero their
+    // buffer after constructing a signer (best-effort key hygiene, e.g.
+    // deviceVaultGenerate). If we kept the reference, that zeroing would wipe
+    // the signer's key in-place — it would then sign with all-zeros while still
+    // advertising the real public key/address, producing signatures the node
+    // rejects as "invalid signature". A freshly-generated signer would fail
+    // until the key was reloaded from storage (fromHex) on the next session —
+    // exactly the "works only after reconnect" device-link bug (2026-06-11).
+    return new WalletSigner(privateKey.slice(), publicKey, address);
   }
 
   /** Create a signer from a hex-encoded private key string. */
@@ -137,37 +145,6 @@ export class WalletSigner {
     const authString =
       `ogmara-auth:${binding.network}:${binding.nodeId}:${nonce}:${timestamp}:${method}:${pathOnly}`;
     const signature = await this.signKleverMessage(new TextEncoder().encode(authString));
-
-    // Auth diagnostic (2026-06-11) — OFF by default; enable in the browser
-    // console with `localStorage.ogmara_auth_debug = '1'`. Self-verifies our
-    // OWN signature exactly as the node would (Klever-hash → ed25519 verify
-    // against our public key). If `selfVerify` is true here but the node
-    // returns 401 "invalid signature", the sent headers are being mismatched;
-    // if false, signing is broken in this runtime.
-    if (typeof localStorage !== 'undefined' && localStorage.getItem('ogmara_auth_debug') === '1') try {
-      const m = new TextEncoder().encode(authString);
-      const lenStr = new TextEncoder().encode(m.length.toString());
-      const data = new Uint8Array(KLEVER_MSG_PREFIX.length + lenStr.length + m.length);
-      data.set(KLEVER_MSG_PREFIX, 0);
-      data.set(lenStr, KLEVER_MSG_PREFIX.length);
-      data.set(m, KLEVER_MSG_PREFIX.length + lenStr.length);
-      const selfVerify = await ed.verifyAsync(signature, keccak_256(data), this.publicKey);
-      // eslint-disable-next-line no-console
-      console.debug('[auth-debug] ' + JSON.stringify({
-        authString,
-        xAddress: this.signingAddress,
-        pubkeyHex: this.publicKeyHex,
-        deviceAddr: this.deviceAddress,
-        walletAddrSet: !!this.walletAddress,
-        nonce,
-        timestamp: timestamp.toString(),
-        sigB64: btoa(String.fromCharCode(...signature)),
-        selfVerify,
-      }));
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.debug('[auth-debug] self-verify error: ' + String(e));
-    }
 
     return {
       'x-ogmara-auth': btoa(String.fromCharCode(...signature)),

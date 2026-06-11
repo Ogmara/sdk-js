@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
+import * as ed from '@noble/ed25519';
+import { keccak_256 } from '@noble/hashes/sha3';
 import { WalletSigner } from './auth';
+
+const KLEVER_PREFIX = new TextEncoder().encode('\x17Klever Signed Message:\n');
+function kleverHash(msg: Uint8Array): Uint8Array {
+  const lenStr = new TextEncoder().encode(msg.length.toString());
+  const data = new Uint8Array(KLEVER_PREFIX.length + lenStr.length + msg.length);
+  data.set(KLEVER_PREFIX, 0);
+  data.set(lenStr, KLEVER_PREFIX.length);
+  data.set(msg, KLEVER_PREFIX.length + lenStr.length);
+  return keccak_256(data);
+}
+function hexToU8(h: string): Uint8Array {
+  return Uint8Array.from(h.match(/../g)!.map((b) => parseInt(b, 16)));
+}
 
 describe('WalletSigner', () => {
   it('should generate a random key pair', async () => {
@@ -12,6 +27,23 @@ describe('WalletSigner', () => {
     const signer1 = await WalletSigner.generate();
     // We can't easily extract the private key hex, but we can test the flow
     expect(signer1.address).toBeTruthy();
+  });
+
+  it('survives the caller zeroing the private-key buffer after construction', async () => {
+    // Regression (2026-06-11): deviceVaultGenerate zeroes its key buffer right
+    // after building the signer (best-effort hygiene). The signer must own a
+    // COPY — otherwise it signs with all-zeros while advertising the real
+    // pubkey, and the node rejects every request as "invalid signature" until
+    // the key reloads next session ("works only after reconnect" device-link bug).
+    const priv = new Uint8Array(32);
+    crypto.getRandomValues(priv);
+    const signer = await WalletSigner.fromPrivateKey(priv);
+    const pubHex = signer.publicKeyHex;
+    priv.fill(0); // caller wipes its buffer
+    const msg = new TextEncoder().encode('ogmara-auth:testnet:node-abc:nonce:1:GET:/api/v1/devices');
+    const sig = await signer.signKleverMessage(msg);
+    const ok = await ed.verifyAsync(sig, kleverHash(msg), hexToU8(pubHex));
+    expect(ok).toBe(true);
   });
 
   it('should produce auth headers bound to a node', async () => {

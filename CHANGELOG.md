@@ -5,6 +5,26 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.3] - 2026-06-11
+
+### Fixed
+
+- **All authenticated calls failing with 401 "invalid signature" until reconnect
+  (device-link bug).** `WalletSigner.fromPrivateKey` stored the caller's
+  private-key `Uint8Array` *by reference*. Callers that zero their key buffer
+  right after constructing a signer (e.g. the web's `deviceVaultGenerate`,
+  best-effort key hygiene) thereby wiped the signer's key in place — it then
+  signed with all-zeros while still advertising the real public key/`ogd1`
+  address, so the node rejected every request as "invalid signature". A freshly
+  generated device key stayed broken until reloaded from storage on the next
+  session, which is why it only worked *after a disconnect+reconnect*. The
+  signer now keeps a defensive copy (`privateKey.slice()`), immune to caller
+  mutation. Added a regression test.
+
+### Removed
+
+- The temporary opt-in `[auth-debug]` diagnostic from 0.26.2 (no longer needed).
+
 ## [0.26.2] - 2026-06-11
 
 ### Added

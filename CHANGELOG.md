@@ -5,6 +5,64 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-06-11
+
+E2E encryption P1 — encrypted Direct Messages on top of the crypto core.
+
+### Added
+
+- **`dm` module** (protocol §8.2): `encryptDmContent` / `decryptDmContent`
+  (XChaCha20-Poly1305 under a per-conversation `conv_key`, `aad = conversation_id ||
+  epoch`; `reply_to` rides inside the ciphertext, not leaked to the node);
+  `wrapConvKey` / `unwrapConvKey` (ECIES, salt = conversation_id); `randomConvKey`;
+  `buildChannelKeyEnvelope` (0x61 per-device key delivery) and
+  `buildEncryptedDirectMessage` (0x05 with encrypted content). `KeyScopeKind`.
+- **Client methods**: `getKeyEnvelope(keyScope, deviceId, epoch?)` (per-device key
+  retrieval), `publishKeyEnvelope(envelope)` (publish a 0x61 via the generic path).
+- `MessageType.ChannelKeyEnvelope` (0x61); `KeyEnvelopeRecord` / `KeyEnvelopeResponse`.
+
+### Changed
+
+- The legacy plaintext `buildDirectMessage` now emits a **24-byte** nonce (matches
+  the node's XChaCha20 wire format) and throws if no CSPRNG is present. It is
+  **deprecated** — use `buildEncryptedDirectMessage`.
+
+### Notes
+
+- sdk-rust DM mirror is intentionally deferred (no Rust DM consumer yet). When
+  added, the inner `{text, reply_to}` blob needs a cross-impl KAT — `@msgpack`
+  encodes a `Uint8Array` as `bin` while `rmp_serde` encodes `[u8;32]` as a seq, so a
+  present `reply_to` is not byte-identical across impls until reconciled.
+
+## [0.27.0] - 2026-06-11
+
+E2E encryption P1 — shared crypto core (matches sdk-rust `crypto.rs` byte-for-byte).
+
+### Added
+
+- **`crypto` module** — the symmetric content-encryption + key-wrapping core for
+  E2E (protocol §8). Audited primitives wrapped behind Ogmara-native names:
+  - `aeadEncrypt` / `aeadDecrypt` — XChaCha20-Poly1305 (24-byte nonce); `aad`
+    binds ciphertext to its envelope.
+  - `hkdfSha256` — HKDF-SHA256 (RFC 5869).
+  - `x25519Dh` / `x25519Public` — X25519 DH; DH rejects all-zero (low-order) output.
+  - `wrapKey` / `wrapKeyWith` / `unwrapKey` + `WrappedKey` — ECIES key wrap to a
+    recipient device enc pubkey: `wk = HKDF(X25519(eph, R_pub), salt=context,
+    info="ogmara-keywrap-v1")`, `wrapped = AEAD(wk, nonce, K, aad=ephPub)`.
+  - Constants `KEY_LEN` (32), `AEAD_NONCE_LEN` (24), `AEAD_TAG_LEN` (16).
+- **Cross-impl test vectors** asserted identically in sdk-rust: RFC 5869 HKDF
+  case 1, draft-irtf-cfrg-xchacha-03 §A.3.1 AEAD KAT, and an Ogmara wrap KAT.
+- `wrapKey` draws a fresh 24-byte CSPRNG nonce and **throws** if no CSPRNG is
+  present — never the all-zero-nonce fallback (audit N1).
+
+### Dependencies
+
+- Added `@noble/ciphers ^2.1.1` (XChaCha20-Poly1305), matching mobile's range.
+  Imported via the `.js` subpath (`@noble/ciphers/chacha.js`) its `exports` map
+  requires. **Consumers must add it as a direct dependency** (web/desktop/mobile),
+  same as `@noble/hashes` — a transitive-only `@noble` dep is not reliably present
+  in a `file:`-linked consumer's node_modules.
+
 ## [0.26.3] - 2026-06-11
 
 ### Fixed

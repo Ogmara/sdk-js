@@ -89,6 +89,7 @@ const MSG_TYPE_NAME: Record<number, string> = {
   [MessageType.CounterVote]: 'CounterVote',
   [MessageType.ChannelMute]: 'ChannelMute',
   [MessageType.DeletionRequest]: 'DeletionRequest',
+  [MessageType.ChannelKeyEnvelope]: 'ChannelKeyEnvelope',
 };
 
 // --- Content rating / visibility numeric mappings ---
@@ -209,10 +210,13 @@ function directMessagePayload(
 ): Record<string, unknown> {
   const senderAddress = signer.walletAddress ?? signer.address;
   const conversationId = computeConversationId(senderAddress, data.recipient);
-  // MVP: plaintext content, no encryption. Random nonce for future E2E readiness.
-  const nonce = typeof crypto !== 'undefined' && crypto.getRandomValues
-    ? crypto.getRandomValues(new Uint8Array(12))
-    : new Uint8Array(12);
+  // DEPRECATED plaintext path — DMs are E2E-encrypted (spec §8.2). Use
+  // `buildEncryptedDirectMessage` (dm.ts). The 24-byte nonce matches the node's
+  // XChaCha20 `[u8;24]` wire format so this stays decodable during the transition.
+  if (typeof crypto === 'undefined' || !crypto.getRandomValues) {
+    throw new Error('no CSPRNG available for DM nonce');
+  }
+  const nonce = crypto.getRandomValues(new Uint8Array(24));
   return {
     recipient: data.recipient,
     conversation_id: conversationId,

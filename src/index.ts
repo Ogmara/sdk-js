@@ -44,6 +44,37 @@ export type {
   DeviceEncBindingParams,
   DeviceEncRevokeParams,
 } from './encryption';
+export {
+  aeadEncrypt,
+  aeadDecrypt,
+  hkdfSha256,
+  x25519Dh,
+  x25519Public,
+  wrapKey,
+  wrapKeyWith,
+  unwrapKey,
+  AEAD_NONCE_LEN,
+  AEAD_TAG_LEN,
+  KEY_LEN,
+} from './crypto';
+export type { WrappedKey } from './crypto';
+export {
+  KeyScopeKind,
+  dmContentAad,
+  randomConvKey,
+  encryptDmContent,
+  decryptDmContent,
+  wrapConvKey,
+  unwrapConvKey,
+  buildChannelKeyEnvelope,
+  buildEncryptedDirectMessage,
+} from './dm';
+export type {
+  DmPlaintext,
+  EncryptedDmContent,
+  ChannelKeyEnvelopeParams,
+  EncryptedDmParams,
+} from './dm';
 export { solveChallenge, solveChallengeAsync } from './pow';
 export type { PowChallenge, PowSolution, PowResult } from './pow';
 export { WsSubscription, subscribe } from './ws';

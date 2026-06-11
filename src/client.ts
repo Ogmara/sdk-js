@@ -99,6 +99,7 @@ import type {
   RevokeDeviceResponse,
   ListDevicesResponse,
   EncKeysResponse,
+  KeyEnvelopeResponse,
   ChatEditData,
   ChatDeleteData,
   ChatReactionData,
@@ -1063,6 +1064,34 @@ export class OgmaraClient {
     return this.postEnvelope(
       `/api/v1/users/${encodeURIComponent(walletAddress)}/enc-keys`,
       envelopeBytes,
+    );
+  }
+
+  /**
+   * Publish a signed `ChannelKeyEnvelope` (0x61) — a per-device wrapped epoch key
+   * for a DM or channel (build it with `buildChannelKeyEnvelope`). Routed through
+   * the generic message-ingestion path.
+   */
+  async publishKeyEnvelope(envelopeBytes: Uint8Array): Promise<unknown> {
+    return this.postEnvelope('/api/v1/messages', envelopeBytes);
+  }
+
+  /**
+   * Fetch THIS wallet's per-device wrapped key envelope for a `keyScope` (a DM
+   * `conversation_id` hex, or a channel scope). Returns the latest epoch unless one
+   * is given. `deviceId` is the caller's device id (hex). The node only ever serves
+   * envelopes wrapped for the authenticated wallet, and the blob is ECIES-sealed to
+   * a device enc key the caller must hold to unwrap.
+   */
+  async getKeyEnvelope(
+    keyScopeHex: string,
+    deviceId: string,
+    epoch?: number,
+  ): Promise<KeyEnvelopeResponse> {
+    const params = new URLSearchParams({ device_id: deviceId });
+    if (epoch !== undefined) params.set('epoch', String(epoch));
+    return this.getAuthenticated<KeyEnvelopeResponse>(
+      `/api/v1/keys/${encodeURIComponent(keyScopeHex)}?${params.toString()}`,
     );
   }
 

@@ -388,6 +388,8 @@ export const MessageType = {
   DeviceEncBinding: 0x36,
   DeviceEncRevoke: 0x37,
   DeletionRequest: 0x50,
+  // E2E per-device key delivery (DMs + channels) — spec 8.1.1 / 8.2
+  ChannelKeyEnvelope: 0x61,
   // Channel Administration
   ChannelAddModerator: 0x14,
   ChannelRemoveModerator: 0x15,
@@ -709,6 +711,28 @@ export interface DeviceEncKeyRecord {
 export interface EncKeysResponse {
   address: string;
   keys: DeviceEncKeyRecord[];
+}
+
+/** A stored per-device wrapped key envelope (E2E P1, spec §8.1.1 / 8.2). */
+export interface KeyEnvelopeRecord {
+  /** ECIES ephemeral X25519 pubkey, hex. */
+  eph_pub: string;
+  /** AEAD nonce, hex (24 bytes). */
+  nonce: string;
+  /** ECIES-wrapped key bytes, hex (48 bytes). */
+  wrapped: string;
+  epoch: number;
+  scope_kind: number;
+  /** Wallet that published the envelope. */
+  author: string;
+  timestamp: number;
+}
+
+/** Response from `GET /api/v1/keys/{key_scope}`. */
+export interface KeyEnvelopeResponse {
+  key_scope: string;
+  epoch: number | null;
+  envelope: KeyEnvelopeRecord | null;
 }
 
 // --- v0.11.0 Message Action types ---

@@ -5,6 +5,14 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-06-12
+
+### Changed
+
+- `getKeyEnvelope(keyScope, deviceId, author?, epoch?)` — added the `author` param
+  for per-sender DM keys (fetch a specific sender's key). Defaults to the caller's
+  own wallet server-side. (Pairs with l2-node 0.65.0.)
+
 ## [0.28.0] - 2026-06-11
 
 E2E encryption P1 — encrypted Direct Messages on top of the crypto core.

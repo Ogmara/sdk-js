@@ -1086,9 +1086,11 @@ export class OgmaraClient {
   async getKeyEnvelope(
     keyScopeHex: string,
     deviceId: string,
+    author?: string,
     epoch?: number,
   ): Promise<KeyEnvelopeResponse> {
     const params = new URLSearchParams({ device_id: deviceId });
+    if (author !== undefined) params.set('author', author);
     if (epoch !== undefined) params.set('epoch', String(epoch));
     return this.getAuthenticated<KeyEnvelopeResponse>(
       `/api/v1/keys/${encodeURIComponent(keyScopeHex)}?${params.toString()}`,

@@ -5,6 +5,17 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-06-13
+
+### Changed
+
+- **`DEFAULT_NODE_URL` is now an empty string** — no hardcoded default node. Node
+  discovery is dynamic (the connected node's `/network/nodes` derived from the SC
+  `getActiveNodes` registry + libp2p gossip, plus a same-origin bootstrap list and
+  user-added URLs). The old `node.ogmara.org` seed was decommissioned; consumers
+  already treat empty as "unset" (`push.ts` fallback, node picker). Do NOT
+  reintroduce a hardcoded host.
+
 ## [0.29.1] - 2026-06-13
 
 ### Security

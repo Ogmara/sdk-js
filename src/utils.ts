@@ -7,8 +7,16 @@
 import type { AnchorStatus, Channel } from './types';
 import { isPrivateIpv4, isPrivateIpv6, isPrivateDnsName } from './sc_discovery';
 
-/** Default production node. */
-export const DEFAULT_NODE_URL = 'https://node.ogmara.org';
+/**
+ * No hardcoded default node. Nodes are discovered dynamically — the connected
+ * node's `/network/nodes` (derived server-side from the SC `getActiveNodes`
+ * registry) + libp2p gossip, plus a same-origin bootstrap list the website
+ * serves and any user-added URLs. Kept as an empty string (not removed) because
+ * consumers fall back to it (`push.ts`, the node picker) and treat empty as
+ * "unset". (`node.ogmara.org` was the old single-point seed — decommissioned
+ * 2026-06; do NOT replace it with another hardcoded host.)
+ */
+export const DEFAULT_NODE_URL = '';
 
 /**
  * Extract hashtags from text content.

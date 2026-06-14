@@ -41,6 +41,7 @@ import {
   buildChannelUpdate,
   buildChannelJoin,
   buildChannelLeave,
+  buildChannelDelete,
   buildChannelMute,
   buildChatEdit,
   buildChatDelete,
@@ -633,10 +634,19 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
-  /** DELETE /api/v1/channels/:channelId — delete a channel (creator only). */
+  /**
+   * Delete a channel (creator only).
+   *
+   * Sends a signed `ChannelDelete` message (POST /api/v1/messages), which the
+   * node gossips + reconcile-indexes so the deletion propagates to every node
+   * that discovered the channel — the channel won't resurrect on other nodes.
+   * (The legacy `DELETE /api/v1/channels/:id` endpoint only deletes locally.)
+   */
   async deleteChannel(channelId: number): Promise<{ ok: boolean }> {
     if (!this.signer) throw new Error('Signer required');
-    return this.deleteAuthenticated(`/api/v1/channels/${channelId}`);
+    const envelope = await buildChannelDelete(this.signer, channelId);
+    await this.postEnvelope('/api/v1/messages', envelope);
+    return { ok: true };
   }
 
   /** POST /api/v1/media/upload — upload media to IPFS via the node. */

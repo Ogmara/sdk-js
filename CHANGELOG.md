@@ -5,6 +5,15 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.36.0] - 2026-06-14
+
+### Added
+
+- **`Channel.key_epoch_floor?: number`** and a `key_epoch_floor?` field on the
+  `channel_members_changed` WS event (P2d private-channel key rotation). The node raises
+  this floor on member removal; clients re-key to ≥ it and refuse to encrypt under a
+  below-floor epoch. Requires l2-node 0.77.0.
+
 ## [0.35.0] - 2026-06-14
 
 ### Added

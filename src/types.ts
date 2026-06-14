@@ -48,6 +48,14 @@ export interface Channel {
   display_name?: string;
   description?: string;
   member_count?: number;
+  /**
+   * P2d rotation: lowest channel key-epoch a client may encrypt under (PRIVATE
+   * channels). The node raises it on every member removal (kick/ban/leave) to
+   * `current_max_epoch + 1`, so a removed member's keys all fall below it. Clients
+   * re-key to ≥ this and refuse to send under a below-floor (compromised) epoch.
+   * Absent/0 = no rotation has happened.
+   */
+  key_epoch_floor?: number;
   /** IPFS CID of the channel logo image (enriched by the node). */
   logo_cid?: string;
   /**
@@ -351,7 +359,7 @@ export type WsEvent =
   // Private-channel membership change (member-targeted): an existing member's
   // client wraps the channel epoch key to a new joiner (reliable key delivery),
   // and a kicked/banned member learns it lost access. action: join|leave|kick|ban.
-  | { type: 'channel_members_changed'; channel_id: number; action: string; member: string }
+  | { type: 'channel_members_changed'; channel_id: number; action: string; member: string; key_epoch_floor?: number }
   | { type: 'error'; code: number; message: string };
 
 /** SDK client configuration. */

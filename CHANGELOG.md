@@ -5,6 +5,15 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.1] - 2026-06-14
+
+### Fixed
+
+- **`buildEncryptedDmEdit` now includes `recipient` in the payload.** The node
+  needs it to route a DM edit to the recipient's gossip topic (l2-node 0.71.0); it
+  is an unused field for `EditPayload` decoding otherwise. Without it, edits never
+  reached the recipient cross-node.
+
 ## [0.31.0] - 2026-06-14
 
 ### Added

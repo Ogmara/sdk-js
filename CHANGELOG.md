@@ -5,6 +5,41 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.38.0] - 2026-06-14
+
+### Added
+
+- **Encrypted public channels (P4 / protocol §8.1).** `Channel.encryption_enabled?` +
+  `Channel.history_visibility?` read fields, and `ChannelCreateData.encryptionEnabled` /
+  `historyVisibility` carried in the `ChannelCreate` payload (null → node applies type-based
+  defaults; Private is always encrypted). Clients use `encryption_enabled` as the
+  authoritative encrypt-on-send / decrypt-on-render signal for a channel — the existing
+  `buildEncryptedChannelMessage` / channel-key machinery (P2) is channel-type-agnostic and
+  reused as-is for public channels (permissionless: any member may seed/cover the epoch key).
+  Requires l2-node 0.79.0+.
+- `buildEncryptedChannelMessage` now carries `attachments` (plaintext IPFS CID metadata) so
+  encrypted channels can still post images/files — only the text is encrypted (P4); per-file
+  media encryption remains P5 (D6).
+
+## [0.37.0] - 2026-06-14
+
+### Added
+
+- **E2E key-recovery vault (P3 / protocol §2.5).** New `keyVault` module + `KeyVaultSync`
+  (`0x38`) carrier let clients persist and restore their symmetric content keys
+  (DM `conv_key`s and channel epoch `channel_key`s) so a fresh install / new device can
+  read full message history.
+  - `deriveVaultBackupKey(sig)` — HKDF-SHA256 over `normalizeWalletSig(signMessage(
+    "ogmara-keyvault-v1"))`, identical across Klever Extension / K5 / local signer, so the
+    backup key reproduces on any device **without exposing the wallet private key**.
+  - `sealKeyVault(bk, keyring)` / `openKeyVault(bk, data)` — XChaCha20-Poly1305 (24-byte
+    nonce) seal/open of `msgpack({conv, chan})` with a fixed AAD; `openKeyVault` accepts the
+    raw GET response (number[] arrays) and drops any value that isn't a 32-byte key.
+  - `VaultKeyring`, `emptyKeyring()`, `VAULT_SIGN_CLAIM`, `VAULT_FORMAT_VERSION` exported.
+  - `OgmaraClient.syncKeyVault(data)` (publish via `0x38`) and `getKeyVault()` (GET
+    `/api/v1/key-vault`, returns `null` when absent). `KeyVaultSyncData` / `KeyVaultResponse`
+    types + `buildKeyVaultSync` envelope builder. Requires l2-node 0.78.0+.
+
 ## [0.36.0] - 2026-06-14
 
 ### Added

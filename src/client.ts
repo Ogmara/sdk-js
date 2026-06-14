@@ -52,6 +52,7 @@ import {
   buildNewsEdit,
   buildNewsDelete,
   buildSettingsSync,
+  buildKeyVaultSync,
   buildReport,
   buildCounterVote,
 } from './envelope';
@@ -111,6 +112,8 @@ import type {
   NewsDeleteData,
   SettingsSyncData,
   SettingsSyncResponse,
+  KeyVaultSyncData,
+  KeyVaultResponse,
   ReportData,
   CounterVoteData,
   NetworkIdentity,
@@ -1003,6 +1006,27 @@ export class OgmaraClient {
       return await this.getAuthenticated<SettingsSyncResponse>('/api/v1/settings');
     } catch {
       return null;
+    }
+  }
+
+  /** POST /api/v1/messages — publish the wallet-encrypted E2E key-recovery vault (P3). */
+  async syncKeyVault(data: KeyVaultSyncData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildKeyVaultSync(this.signer, data);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /** GET /api/v1/key-vault — retrieve the caller's encrypted key-recovery vault.
+   *  Returns `null` ONLY for a genuine 404 (no vault published yet); a transient
+   *  error (network/5xx/auth) is rethrown so the caller can retry rather than treat
+   *  it as "no vault" and overwrite the remote copy. */
+  async getKeyVault(): Promise<KeyVaultResponse | null> {
+    if (!this.signer) throw new Error('Signer required');
+    try {
+      return await this.getAuthenticated<KeyVaultResponse>('/api/v1/key-vault');
+    } catch (e) {
+      if (e instanceof Error && /\(404\)/.test(e.message)) return null;
+      throw e;
     }
   }
 

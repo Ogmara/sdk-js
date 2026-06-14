@@ -622,6 +622,10 @@ export async function buildChatReaction(signer: WalletSigner, data: ChatReaction
   return buildEnvelope(signer, MessageType.ChatReaction, chatReactionPayload(data));
 }
 
+/**
+ * @deprecated Sends a plaintext DM edit, which l2-node 0.70.0+ rejects (DM edits
+ * must be E2E-encrypted). Use `buildEncryptedDmEdit` (dm.ts) with the conv_key.
+ */
 export async function buildDmEdit(signer: WalletSigner, data: DirectMessageEditData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.DirectMessageEdit, dmEditPayload(data, signer));
 }

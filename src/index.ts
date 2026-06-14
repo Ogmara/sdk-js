@@ -68,12 +68,14 @@ export {
   unwrapConvKey,
   buildChannelKeyEnvelope,
   buildEncryptedDirectMessage,
+  buildEncryptedDmEdit,
 } from './dm';
 export type {
   DmPlaintext,
   EncryptedDmContent,
   ChannelKeyEnvelopeParams,
   EncryptedDmParams,
+  EncryptedDmEditParams,
 } from './dm';
 export { solveChallenge, solveChallengeAsync } from './pow';
 export type { PowChallenge, PowSolution, PowResult } from './pow';

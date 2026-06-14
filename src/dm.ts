@@ -188,6 +188,47 @@ export async function buildEncryptedDirectMessage(
   return buildEnvelope(signer, MessageType.DirectMessage, payload);
 }
 
+/** Parameters for {@link buildEncryptedDmEdit}. */
+export interface EncryptedDmEditParams {
+  recipient: string;
+  /** Hex msg_id (32-byte) of the original DM being edited. */
+  msgId: string;
+  /** The conversation key for `epoch` (same key the original body uses). */
+  convKey: Uint8Array;
+  epoch: number;
+  /** The new plaintext content. */
+  content: string;
+}
+
+/**
+ * Build a signed, encrypted `DirectMessageEdit` (0x06). The new content is sealed
+ * under `conv_key` exactly like a DM body (`aad = conversation_id || epoch`) and
+ * carried in `enc_content`/`enc_nonce`; the node projects it onto the original DM
+ * so the edited message decrypts identically to a never-edited one. The legacy
+ * plaintext `content` String is sent empty — DM edits never leak content to the node.
+ */
+export async function buildEncryptedDmEdit(
+  signer: WalletSigner,
+  p: EncryptedDmEditParams,
+): Promise<Uint8Array> {
+  if (p.epoch < 1) throw new Error('DM edit requires key_epoch >= 1 (epoch 0 is legacy plaintext)');
+  const senderWallet = signer.walletAddress ?? signer.address;
+  const conversationId = computeConversationId(senderWallet, p.recipient);
+  const { content, nonce } = encryptDmContent(p.convKey, conversationId, p.epoch, {
+    text: p.content,
+  });
+  const payload = {
+    target_id: hexToBytes32(p.msgId),
+    channel_id: null,
+    content: '', // unused plaintext placeholder for DM edits
+    edited_at: Date.now(),
+    enc_content: content,
+    enc_nonce: nonce,
+    key_epoch: p.epoch,
+  };
+  return buildEnvelope(signer, MessageType.DirectMessageEdit, payload);
+}
+
 function hexToBytes32(h: string): Uint8Array {
   const clean = h.toLowerCase();
   if (clean.length !== 64 || !/^[0-9a-f]+$/.test(clean)) throw new Error('reply_to must be 32-byte hex');

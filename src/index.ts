@@ -69,6 +69,7 @@ export {
   buildChannelKeyEnvelope,
   buildEncryptedDirectMessage,
   buildEncryptedDmEdit,
+  buildEncryptedChannelMessage,
 } from './dm';
 export type {
   DmPlaintext,
@@ -76,6 +77,7 @@ export type {
   ChannelKeyEnvelopeParams,
   EncryptedDmParams,
   EncryptedDmEditParams,
+  EncryptedChannelMessageParams,
 } from './dm';
 export { solveChallenge, solveChallengeAsync } from './pow';
 export type { PowChallenge, PowSolution, PowResult } from './pow';
@@ -84,7 +86,7 @@ export type { WsOptions } from './ws';
 export {
   buildEnvelope, buildChatMessage, buildNewsPost, buildNewsComment, buildProfileUpdate,
   buildFollow, buildUnfollow, buildReaction, buildRepost, buildDirectMessage,
-  computeConversationId, buildChannelCreate, buildChannelUpdate, buildChannelJoin,
+  computeConversationId, computeChannelScope, buildChannelCreate, buildChannelUpdate, buildChannelJoin,
   buildChannelLeave, buildChannelMute,
   buildChatEdit, buildChatDelete, buildChatReaction,
   buildDmEdit, buildDmDelete, buildDmReaction,

@@ -536,6 +536,16 @@ export class OgmaraClient {
     return this.postEnvelope('/api/v1/messages', envelope);
   }
 
+  /**
+   * POST /api/v1/messages — send a pre-built message envelope (e.g. an encrypted
+   * private-channel ChatMessage from `buildEncryptedChannelMessage`). The caller
+   * is responsible for constructing + signing the envelope.
+   */
+  async sendMessageEnvelope(envelope: Uint8Array): Promise<{ msg_id: string }> {
+    if (!this.signer) throw new Error('Signer required for authenticated endpoints');
+    return this.postEnvelope('/api/v1/messages', envelope);
+  }
+
   /** POST /api/v1/dm/:address — send an encrypted DM.
    *  Note: DM encryption is handled by the caller. The encryptedPayload
    *  is the pre-built envelope bytes (MessagePack). */

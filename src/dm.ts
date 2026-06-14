@@ -8,7 +8,7 @@
  */
 import { encode, decode } from '@msgpack/msgpack';
 import { aeadEncrypt, aeadDecrypt, wrapKey, unwrapKey, KEY_LEN, type WrappedKey } from './crypto';
-import { buildEnvelope, computeConversationId } from './envelope';
+import { buildEnvelope, computeConversationId, computeChannelScope } from './envelope';
 import { MessageType } from './types';
 import type { WalletSigner } from './auth';
 
@@ -236,4 +236,51 @@ function hexToBytes32(h: string): Uint8Array {
   const out = new Uint8Array(32);
   for (let i = 0; i < 32; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return out;
+}
+
+const CHANNEL_CONTENT_RATING: Record<string, number> = {
+  general: 0, teen: 1, mature: 2, explicit: 3,
+};
+
+/** Parameters for {@link buildEncryptedChannelMessage}. */
+export interface EncryptedChannelMessageParams {
+  channelId: number;
+  /** The channel epoch key (established + cached by the caller). */
+  convKey: Uint8Array;
+  epoch: number;
+  text: string;
+  /** Hex msg_id of the parent — stays PLAINTEXT (the node's thread index needs it). */
+  replyTo?: string;
+  /** Mentioned addresses — stay PLAINTEXT (the node generates notifications). */
+  mentions?: string[];
+  contentRating?: 'general' | 'teen' | 'mature' | 'explicit';
+}
+
+/**
+ * Build a signed, encrypted `ChatMessage` (0x04) for a private channel. Only the
+ * TEXT is sealed — under the channel epoch key with `aad = channel_scope || epoch`
+ * (same scheme as a DM body) — and carried in `enc_content`/`enc_nonce`/`key_epoch`;
+ * the plaintext `content` is empty. Per spec §3.3 `mentions`/`reply_to`/
+ * `content_rating` stay plaintext so the node keeps doing notifications, threading,
+ * and rating filters.
+ */
+export async function buildEncryptedChannelMessage(
+  signer: WalletSigner,
+  p: EncryptedChannelMessageParams,
+): Promise<Uint8Array> {
+  if (p.epoch < 1) throw new Error('channel message requires key_epoch >= 1');
+  const scope = computeChannelScope(p.channelId);
+  const { content, nonce } = encryptDmContent(p.convKey, scope, p.epoch, { text: p.text });
+  const payload = {
+    channel_id: p.channelId,
+    content: '', // text rides in enc_content
+    content_rating: CHANNEL_CONTENT_RATING[p.contentRating ?? 'general'] ?? 0,
+    reply_to: p.replyTo ? hexToBytes32(p.replyTo) : null,
+    mentions: p.mentions ?? [],
+    attachments: [] as unknown[],
+    enc_content: content,
+    enc_nonce: nonce,
+    key_epoch: p.epoch,
+  };
+  return buildEnvelope(signer, MessageType.ChatMessage, payload);
 }

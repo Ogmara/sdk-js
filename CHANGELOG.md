@@ -5,6 +5,26 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.32.0] - 2026-06-14
+
+P2b — SDK surface for end-to-end-encrypted PRIVATE channels (OECK).
+
+### Added
+
+- **`computeChannelScope(channelId)`** — `keccak256("ogmara-channel-scope-v1" ||
+  channel_id_be8)`, the deterministic 32-byte channel key scope (mirrors the Rust
+  `compute_channel_scope`, cross-impl KAT). Domain-separated from DM scopes.
+- **`buildEncryptedChannelMessage`** (dm.ts) — builds an encrypted `ChatMessage`
+  (0x04) for a private channel: only the TEXT is sealed under the channel epoch key
+  (`aad = channel_scope || epoch`, same scheme as a DM body) and carried in
+  `enc_content`/`enc_nonce`/`key_epoch`; `content` is empty. `mentions`/`reply_to`/
+  `content_rating` stay PLAINTEXT (spec §3.3) so the node keeps doing notifications,
+  threading, and filtering. New `EncryptedChannelMessageParams` type. Round-trip +
+  channel-scope KAT tests.
+- **`Client.sendMessageEnvelope(envelope)`** — POST a pre-built (e.g. encrypted)
+  message envelope to `/api/v1/messages`.
+
+## [0.31.1] - 2026-06-14
 ## [0.31.1] - 2026-06-14
 
 ### Fixed

@@ -254,6 +254,19 @@ export interface EncryptedChannelMessageParams {
   /** Mentioned addresses — stay PLAINTEXT (the node generates notifications). */
   mentions?: string[];
   contentRating?: 'general' | 'teen' | 'mature' | 'explicit';
+  /**
+   * Attachments — carried as PLAINTEXT metadata (IPFS CID, mime, size). Only the
+   * TEXT is encrypted in P4; per-file media encryption is P5 (D6). An encrypted
+   * channel can therefore still carry images/files (the node's encryption gate
+   * allows an encrypted or attachment-only message; it only blocks plaintext text).
+   */
+  attachments?: Array<{
+    cid: string;
+    mime_type: string;
+    size_bytes: number;
+    filename?: string;
+    thumbnail_cid?: string;
+  }>;
 }
 
 /**
@@ -277,7 +290,13 @@ export async function buildEncryptedChannelMessage(
     content_rating: CHANNEL_CONTENT_RATING[p.contentRating ?? 'general'] ?? 0,
     reply_to: p.replyTo ? hexToBytes32(p.replyTo) : null,
     mentions: p.mentions ?? [],
-    attachments: [] as unknown[],
+    attachments: (p.attachments ?? []).map((a) => ({
+      cid: a.cid,
+      mime_type: a.mime_type,
+      size_bytes: a.size_bytes,
+      filename: a.filename ?? null,
+      thumbnail_cid: a.thumbnail_cid ?? null,
+    })),
     enc_content: content,
     enc_nonce: nonce,
     key_epoch: p.epoch,

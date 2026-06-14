@@ -91,8 +91,17 @@ export {
   buildChatEdit, buildChatDelete, buildChatReaction,
   buildDmEdit, buildDmDelete, buildDmReaction,
   buildNewsEdit, buildNewsDelete,
-  buildSettingsSync, buildReport, buildCounterVote,
+  buildSettingsSync, buildKeyVaultSync, buildReport, buildCounterVote,
 } from './envelope';
+export {
+  VAULT_SIGN_CLAIM,
+  VAULT_FORMAT_VERSION,
+  deriveVaultBackupKey,
+  sealKeyVault,
+  openKeyVault,
+  emptyKeyring,
+} from './keyVault';
+export type { VaultKeyring } from './keyVault';
 export * from './types';
 export {
   extractHashtags,

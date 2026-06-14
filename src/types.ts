@@ -56,6 +56,15 @@ export interface Channel {
    * Absent/0 = no rotation has happened.
    */
   key_epoch_floor?: number;
+  /**
+   * P4 OECK: whether message content is E2E-encrypted in this channel. Private
+   * channels are always encrypted; new Public/ReadPublic channels are created
+   * encrypted (forced on). Absent/false on legacy plaintext channels (dual-read).
+   * Authoritative for the client's encrypt-on-send / decrypt-on-render decision.
+   */
+  encryption_enabled?: boolean;
+  /** P4 D3 history visibility: 0 = ForwardOnly, 1 = FullHistory. */
+  history_visibility?: number;
   /** IPFS CID of the channel logo image (enriched by the node). */
   logo_cid?: string;
   /**
@@ -399,6 +408,8 @@ export const MessageType = {
   Unfollow: 0x35,
   DeviceEncBinding: 0x36,
   DeviceEncRevoke: 0x37,
+  // E2E key-recovery vault (P3 / protocol §2.5)
+  KeyVaultSync: 0x38,
   DeletionRequest: 0x50,
   // E2E per-device key delivery (DMs + channels) — spec 8.1.1 / 8.2
   ChannelKeyEnvelope: 0x61,
@@ -502,6 +513,14 @@ export interface ChannelCreateData {
   description?: string;
   /** Human-readable moderation rules. */
   rules?: string;
+  /**
+   * P4: E2E-encrypt this channel's message content. Private channels are always
+   * encrypted regardless; for new Public/ReadPublic channels updated clients send
+   * `true` (encryption forced on). Omit on legacy plaintext channels.
+   */
+  encryptionEnabled?: boolean;
+  /** P4 D3 history visibility: 0 = ForwardOnly, 1 = FullHistory. */
+  historyVisibility?: number;
 }
 
 /** Channel update data for modifying channel info. */
@@ -844,6 +863,27 @@ export interface SettingsSyncResponse {
   encrypted_settings: number[];
   nonce: number[];
   key_epoch: number;
+}
+
+/**
+ * Key-recovery vault payload (E2E P3). The `encrypted_vault` is XChaCha20-Poly1305
+ * ciphertext of `msgpack(keyring)`, sealed under a wallet-derived backup key the
+ * node never holds. See {@link sealKeyVault} / {@link buildKeyVaultSync}.
+ */
+export interface KeyVaultSyncData {
+  /** XChaCha20-Poly1305 ciphertext (raw bytes). */
+  encrypted_vault: Uint8Array;
+  /** XChaCha20-Poly1305 nonce (24 bytes). */
+  nonce: Uint8Array;
+  /** Vault payload format version (currently 1). */
+  format_version: number;
+}
+
+/** Key-recovery vault response (GET /api/v1/key-vault). */
+export interface KeyVaultResponse {
+  encrypted_vault: number[];
+  nonce: number[];
+  format_version: number;
 }
 
 /** Extended channel detail response (with admin data). */

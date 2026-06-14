@@ -38,6 +38,7 @@ import {
   type NewsEditData,
   type NewsDeleteData,
   type SettingsSyncData,
+  type KeyVaultSyncData,
   type ReportData,
   type CounterVoteData,
 } from './types';
@@ -267,6 +268,9 @@ function channelCreatePayload(data: ChannelCreateData): Record<string, unknown> 
       admins: [],
       rules: data.rules ?? null,
     },
+    // P4: null → node applies type-based defaults (Private always encrypted).
+    encryption_enabled: data.encryptionEnabled ?? null,
+    history_visibility: data.historyVisibility ?? null,
   };
 }
 
@@ -613,6 +617,14 @@ function settingsSyncPayload(data: SettingsSyncData): Record<string, unknown> {
   };
 }
 
+function keyVaultSyncPayload(data: KeyVaultSyncData): Record<string, unknown> {
+  return {
+    encrypted_vault: data.encrypted_vault,
+    nonce: data.nonce,
+    format_version: data.format_version,
+  };
+}
+
 /** Map SDK category strings to Rust ReportReason enum variant names. */
 const REPORT_REASON_MAP: Record<string, string> = {
   spam: 'Spam',
@@ -677,6 +689,13 @@ export async function buildNewsDelete(signer: WalletSigner, data: NewsDeleteData
 
 export async function buildSettingsSync(signer: WalletSigner, data: SettingsSyncData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.SettingsSync, settingsSyncPayload(data));
+}
+
+/** Build a `KeyVaultSync` (0x38) envelope carrying the wallet-encrypted key-recovery
+ *  vault (E2E P3). Device-signed like any other message; the node resolves author →
+ *  wallet and stores it per-wallet (LWW). */
+export async function buildKeyVaultSync(signer: WalletSigner, data: KeyVaultSyncData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.KeyVaultSync, keyVaultSyncPayload(data));
 }
 
 export async function buildReport(signer: WalletSigner, data: ReportData): Promise<Uint8Array> {

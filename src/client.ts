@@ -897,7 +897,12 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
-  /** POST /api/v1/messages — edit a DM (own). */
+  /**
+   * POST /api/v1/messages — edit a DM (own).
+   * @deprecated Sends plaintext content, which l2-node 0.70.0+ rejects. Build an
+   * encrypted edit with `buildEncryptedDmEdit` (needs the conv_key) and POST it
+   * via `sendDm`, as the web/desktop clients do.
+   */
   async editDm(recipient: string, msgId: string, content: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
     const envelope = await buildDmEdit(this.signer, { recipient, msgId, content });

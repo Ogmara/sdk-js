@@ -5,6 +5,24 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.31.0] - 2026-06-14
+
+### Added
+
+- **`buildEncryptedDmEdit`** (dm.ts) — builds a signed, E2E-encrypted
+  `DirectMessageEdit` (0x06). The new content is sealed under the conversation's
+  `conv_key` exactly like a DM body (`aad = conversation_id || epoch`) and carried
+  in `enc_content`/`enc_nonce`/`key_epoch`; the plaintext `content` String is sent
+  empty so the node never sees the edited text. Requires `key_epoch ≥ 1`. New
+  `EncryptedDmEditParams` type; both exported from the package root. Round-trip
+  unit test added.
+
+### Deprecated
+
+- **`buildDmEdit` (envelope.ts) and `Client.editDm`** — these send a plaintext DM
+  edit, which l2-node 0.70.0+ rejects (DM edits must be E2E-encrypted). Use
+  `buildEncryptedDmEdit` with the conv_key and POST via `sendDm`.
+
 ## [0.30.0] - 2026-06-13
 
 ### Changed

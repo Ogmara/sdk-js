@@ -348,6 +348,10 @@ export type WsEvent =
   | { type: 'dm'; envelope: Envelope }
   | { type: 'notification'; mention: Record<string, unknown> }
   | { type: 'presence'; channel_id: string; online: string[] }
+  // Private-channel membership change (member-targeted): an existing member's
+  // client wraps the channel epoch key to a new joiner (reliable key delivery),
+  // and a kicked/banned member learns it lost access. action: join|leave|kick|ban.
+  | { type: 'channel_members_changed'; channel_id: number; action: string; member: string }
   | { type: 'error'; code: number; message: string };
 
 /** SDK client configuration. */

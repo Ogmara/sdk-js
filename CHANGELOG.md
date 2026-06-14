@@ -5,6 +5,18 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.34.0] - 2026-06-14
+
+### Added
+
+- **`channel_members_changed` WebSocket event** added to the `WsEvent` union:
+  `{type:"channel_members_changed", channel_id:number, action:string, member:string}`.
+  Emitted by the node (l2-node 0.75.0) to a private channel's members on
+  join/leave/kick/ban so clients can drive reliable E2E key delivery (wrap the channel
+  key to a new joiner) and react to removals. `action` is `join`|`leave`|`kick`|`ban`;
+  `member` is a wallet address. `channel_id` is numeric (consistent with the channel
+  `message` event).
+
 ## [0.33.0] - 2026-06-14
 
 ### Added

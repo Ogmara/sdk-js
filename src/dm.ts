@@ -219,6 +219,7 @@ export async function buildEncryptedDmEdit(
   });
   const payload = {
     target_id: hexToBytes32(p.msgId),
+    recipient: p.recipient, // lets the node route the edit to the recipient's DM topic
     channel_id: null,
     content: '', // unused plaintext placeholder for DM edits
     edited_at: Date.now(),

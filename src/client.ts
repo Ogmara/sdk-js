@@ -603,6 +603,22 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
+  /**
+   * POST /api/v1/channels/:id/federate — replicate a PRIVATE channel hosted on
+   * another node to THIS (the caller's home) node. The node fetches the channel
+   * record from `hostUrl`, records the caller's membership, and subscribes to the
+   * channel's gossip topic, so the channel's encrypted messages + keys flow here
+   * live without the member switching nodes. `hostUrl` comes from the invite link.
+   * Authenticated.
+   */
+  async federateChannel(channelId: number, hostUrl: string): Promise<{ federated: boolean; channel_id: number }> {
+    if (!this.signer) throw new Error('Signer required');
+    return this.postJson(
+      `/api/v1/channels/${channelId}/federate`,
+      { host_url: hostUrl },
+    );
+  }
+
   /** POST /api/v1/messages — leave a channel. */
   async leaveChannel(channelId: number): Promise<void> {
     if (!this.signer) throw new Error('Signer required');

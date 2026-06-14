@@ -5,6 +5,17 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.33.0] - 2026-06-14
+
+### Added
+
+- **`Client.federateChannel(channelId, hostUrl)`** — POST `/api/v1/channels/{id}/federate`
+  (authenticated): asks the caller's home node to replicate a private channel hosted
+  on `hostUrl` (subscribe + record membership) so its encrypted messages/keys flow to
+  the home node live, without switching nodes (private-channel federation F1; pairs
+  with l2-node 0.74.x).
+
+## [0.32.0] - 2026-06-14
 ## [0.32.0] - 2026-06-14
 
 P2b — SDK surface for end-to-end-encrypted PRIVATE channels (OECK).

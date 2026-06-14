@@ -10,7 +10,9 @@ import {
   buildEncryptedDmEdit,
 } from './dm';
 import { x25519Public } from './crypto';
-import { computeConversationId } from './envelope';
+import { computeConversationId, computeChannelScope } from './envelope';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { buildEncryptedChannelMessage } from './dm';
 import { WalletSigner } from './auth';
 
 const range = (start: number, end: number): Uint8Array =>
@@ -95,5 +97,44 @@ describe('DM E2E (P1)', () => {
     const convId = computeConversationId(signer.address, recipient);
     const out = decryptDmContent(convKey, convId, 2, payload.enc_content, payload.enc_nonce);
     expect(out.text).toBe('corrected text 🔁');
+  });
+
+  it('computeChannelScope matches the Rust KAT and is domain-separated', () => {
+    // keccak256("ogmara-channel-scope-v1" || 1u64_be) — locked cross-impl with Rust.
+    const tag = new TextEncoder().encode('ogmara-channel-scope-v1');
+    const buf = new Uint8Array(tag.length + 8);
+    buf.set(tag, 0);
+    new DataView(buf.buffer).setBigUint64(tag.length, 1n);
+    expect(Array.from(computeChannelScope(1))).toEqual(Array.from(keccak_256(buf)));
+    // Disjoint from a DM scope.
+    const dm = computeConversationId('klv1aaaa', 'klv1bbbb');
+    expect(Array.from(computeChannelScope(0))).not.toEqual(Array.from(dm));
+  });
+
+  it('builds an encrypted channel message: text in enc_content, metadata plaintext', async () => {
+    const signer = await WalletSigner.generate();
+    const convKey = randomConvKey();
+    const envBytes = await buildEncryptedChannelMessage(signer, {
+      channelId: 12,
+      convKey,
+      epoch: 3,
+      text: 'secret channel msg 🛡️',
+      mentions: ['klv1mentioned'],
+      replyTo: 'cd'.repeat(32),
+    });
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as {
+      channel_id: number; content: string; mentions: string[];
+      reply_to: Uint8Array; enc_content: Uint8Array; enc_nonce: Uint8Array; key_epoch: number;
+    };
+    expect(payload.channel_id).toBe(12);
+    expect(payload.content).toBe('');           // text never leaks plaintext
+    expect(payload.mentions).toEqual(['klv1mentioned']); // metadata stays plaintext
+    expect(payload.reply_to.length).toBe(32);
+    expect(payload.key_epoch).toBe(3);
+    // The text decrypts under the channel scope.
+    const scope = computeChannelScope(12);
+    const out = decryptDmContent(convKey, scope, 3, payload.enc_content, payload.enc_nonce);
+    expect(out.text).toBe('secret channel msg 🛡️');
   });
 });

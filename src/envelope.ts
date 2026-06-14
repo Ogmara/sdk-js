@@ -129,6 +129,20 @@ export function computeConversationId(addrA: string, addrB: string): Uint8Array 
   return keccak_256(new TextEncoder().encode(first + second));
 }
 
+/**
+ * Compute the deterministic 32-byte key scope for an encrypted channel (P2 OECK):
+ * `keccak256("ogmara-channel-scope-v1" || channel_id_be8)`. Domain-separated from
+ * DM `conversation_id` scopes. Produces identical output to the Rust
+ * `compute_channel_scope`.
+ */
+export function computeChannelScope(channelId: number): Uint8Array {
+  const tag = new TextEncoder().encode('ogmara-channel-scope-v1');
+  const buf = new Uint8Array(tag.length + 8);
+  buf.set(tag, 0);
+  new DataView(buf.buffer).setBigUint64(tag.length, BigInt(channelId));
+  return keccak_256(buf);
+}
+
 // --- Payload serializers ---
 // Each returns a plain object matching the Rust struct field names exactly.
 // The object is then MessagePack-encoded by buildEnvelope().

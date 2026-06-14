@@ -71,6 +71,7 @@ const MSG_TYPE_NAME: Record<number, string> = {
   [MessageType.ChannelPinMessage]: 'ChannelPinMessage',
   [MessageType.ChannelUnpinMessage]: 'ChannelUnpinMessage',
   [MessageType.ChannelInvite]: 'ChannelInvite',
+  [MessageType.ChannelDelete]: 'ChannelDelete',
   [MessageType.NewsPost]: 'NewsPost',
   [MessageType.NewsEdit]: 'NewsEdit',
   [MessageType.NewsDelete]: 'NewsDelete',
@@ -302,6 +303,10 @@ function channelLeavePayload(channelId: number): Record<string, unknown> {
   return { channel_id: channelId };
 }
 
+function channelDeletePayload(channelId: number): Record<string, unknown> {
+  return { channel_id: channelId };
+}
+
 interface AddModeratorData {
   channelId: number;
   targetUser: string;
@@ -448,6 +453,16 @@ export async function buildChannelJoin(signer: WalletSigner, channelId: number):
 
 export async function buildChannelLeave(signer: WalletSigner, channelId: number): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.ChannelLeave, channelLeavePayload(channelId));
+}
+
+/**
+ * Build a signed `ChannelDelete` envelope (creator only). Unlike the REST
+ * `DELETE /channels/:id` (local to one node), this is gossiped + reconcile-indexed
+ * by the node so the deletion (tombstone) propagates to every node that discovered
+ * the channel — preventing the channel from resurrecting on other nodes.
+ */
+export async function buildChannelDelete(signer: WalletSigner, channelId: number): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelDelete, channelDeletePayload(channelId));
 }
 
 export async function buildAddModerator(signer: WalletSigner, data: AddModeratorData): Promise<Uint8Array> {

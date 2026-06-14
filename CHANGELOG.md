@@ -5,6 +5,21 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.35.0] - 2026-06-14
+
+### Added
+
+- **`buildChannelDelete(signer, channelId)`** + `MessageType.ChannelDelete` (0x1c) —
+  builds a signed `ChannelDelete` envelope.
+
+### Changed
+
+- **`Client.deleteChannel(channelId)`** now sends the signed `ChannelDelete` message
+  (POST /api/v1/messages) instead of the local-only `DELETE /api/v1/channels/:id`.
+  The node gossips + reconcile-indexes it so the deletion propagates to every node
+  that discovered the channel — fixing channels resurrecting on other nodes after a
+  delete. Return shape (`{ ok: true }`) is unchanged. Requires l2-node 0.76.0.
+
 ## [0.34.0] - 2026-06-14
 
 ### Added

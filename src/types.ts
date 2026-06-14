@@ -403,6 +403,7 @@ export const MessageType = {
   ChannelPinMessage: 0x19,
   ChannelUnpinMessage: 0x1a,
   ChannelInvite: 0x1b,
+  ChannelDelete: 0x1c,
   // News Engagement
   NewsReaction: 0x24,
   NewsRepost: 0x25,

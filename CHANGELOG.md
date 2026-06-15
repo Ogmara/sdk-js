@@ -5,6 +5,33 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.0] - 2026-06-15
+
+### Added
+
+- **Encrypted media (P5 / D6 — protocol §8, spec 04 §9).** New `media` module:
+  `encryptFile()` / `encryptThumbnail()` / `decryptMedia()` seal file bytes with a
+  fresh per-file XChaCha20-Poly1305 key (`aad = "ogmara-media-v1"`, mirrored in
+  sdk-rust) before they touch IPFS; `MediaDescriptor` carries the per-file key + real
+  mime/filename **inside the message's already-encrypted content** (`content.media`),
+  so there is no new key envelope and no per-file key delivery — members who can read
+  the message recover every file key for free.
+- `uploadMedia(file, filename, { encrypted: true })` sets the node's `encrypted`
+  multipart flag so the opaque ciphertext bypasses the MIME allowlist (l2-node 0.80.0).
+- `EncryptedDmParams.media` and `EncryptedChannelMessageParams.media` thread descriptors
+  through `buildEncryptedDirectMessage` / `buildEncryptedChannelMessage`. On the wire,
+  encrypted media is stripped to a non-identifying `Attachment`
+  (`{ cid, size_bytes, mime_type: "application/octet-stream" }`, no filename) for the
+  node's `MAX_ATTACHMENTS`/retention bookkeeping (spec 04 §9.3) — the real list comes
+  from the decrypted content. Used for both private and public encrypted channels.
+- Tests: file/thumbnail round-trip, wrong-key auth failure, descriptor wire round-trip,
+  filename/mime non-leak, in-content sealing, and a fixed cross-impl KAT for sdk-rust.
+
+### Changed
+
+- `DmPlaintext` gains an optional `media[]`; `encryptDmContent`/`decryptDmContent`
+  serialize it inside the sealed blob (back-compatible — absent ⇒ `null`).
+
 ## [0.39.0] - 2026-06-15
 
 ### Fixed

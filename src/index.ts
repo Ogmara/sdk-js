@@ -79,6 +79,17 @@ export type {
   EncryptedDmEditParams,
   EncryptedChannelMessageParams,
 } from './dm';
+export {
+  MEDIA_AAD,
+  randomFileKey,
+  encryptFile,
+  encryptThumbnail,
+  decryptMedia,
+  mediaToWire,
+  mediaFromWire,
+  mediaToWireAttachment,
+} from './media';
+export type { MediaDescriptor, EncryptedFile } from './media';
 export { solveChallenge, solveChallengeAsync } from './pow';
 export type { PowChallenge, PowSolution, PowResult } from './pow';
 export { WsSubscription, subscribe } from './ws';

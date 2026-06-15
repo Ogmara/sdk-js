@@ -5,6 +5,20 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.39.0] - 2026-06-15
+
+### Fixed
+
+- **PoW challenge pile-up → 503 "too many pending challenges".** When several
+  authenticated writes fire close together (e.g. encrypted-channel key publishes +
+  device binding + mark-read + a send) on a slow runtime (React Native / Hermes), each
+  one independently requested and solved its own proof-of-work challenge, so the node
+  saw many pending challenges and rejected with 503. The client now (a) deduplicates the
+  solve via a shared in-flight promise (`ensurePowSolved`), and (b) makes concurrent
+  writes wait for an in-flight solve before sending, so a burst collapses to ONE
+  challenge/solve. No behavior change once the wallet is verified (writes run fully in
+  parallel). Touches `postEnvelope`/`putEnvelope`/`deleteEnvelope` + the other auth paths.
+
 ## [0.38.0] - 2026-06-14
 
 ### Added

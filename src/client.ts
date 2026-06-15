@@ -167,6 +167,12 @@ export class OgmaraClient {
   /** Whether this client's wallet has been verified (PoW solved or on-chain registered). */
   private powVerified = false;
 
+  /** In-flight PoW solve, shared across concurrent writes so a burst of requests
+   *  (e.g. encrypted-channel key publishes + device binding + mark-read + a send on
+   *  slow Hermes) collapses to ONE challenge/solve instead of issuing many pending
+   *  challenges (which the node rejects with 503 "too many pending challenges"). */
+  private powInflight: Promise<void> | null = null;
+
   /** Optional callback invoked during PoW solving with progress (hashes computed). */
   onPowProgress?: (hashes: number) => void;
 
@@ -1217,7 +1223,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge, body.address);
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.getAuthenticated(path);
         }
       }
@@ -1256,7 +1262,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge, body.address);
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.get(path);
         }
       }
@@ -1299,6 +1305,11 @@ export class OgmaraClient {
   private async postEnvelope<T>(path: string, envelopeBytes: Uint8Array): Promise<T> {
     if (!this.signer) throw new Error('Signer required');
 
+    // If a PoW solve is already underway, wait for it before sending so we don't
+    // issue another pending challenge in parallel (the node caps pending challenges
+    // → 503). Once verified, this is a no-op and writes run fully in parallel.
+    if (!this.powVerified && this.powInflight) { try { await this.powInflight; } catch { /* let our own attempt surface any error */ } }
+
     const headers = await this.authHeaders('POST', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
@@ -1319,7 +1330,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge, body.address);
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           // Retry the original request with fresh auth headers
           return this.postEnvelope(path, envelopeBytes);
         }
@@ -1338,6 +1349,7 @@ export class OgmaraClient {
   /** PUT with envelope bytes (MessagePack binary body). */
   private async putEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
+    if (!this.powVerified && this.powInflight) { try { await this.powInflight; } catch { /* surface own error */ } }
     const headers = await this.authHeaders('PUT', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
@@ -1355,7 +1367,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge, body.address);
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.putEnvelope(path, envelopeBytes);
         }
       }
@@ -1372,6 +1384,7 @@ export class OgmaraClient {
   /** DELETE with envelope bytes (MessagePack binary body). */
   private async deleteEnvelope(path: string, envelopeBytes: Uint8Array): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
+    if (!this.powVerified && this.powInflight) { try { await this.powInflight; } catch { /* surface own error */ } }
     const headers = await this.authHeaders('DELETE', path);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
@@ -1389,7 +1402,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const body = await resp.json().catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
-          await this.solvePow(body.challenge as PowChallenge, body.address);
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.deleteEnvelope(path, envelopeBytes);
         }
       }
@@ -1423,7 +1436,7 @@ export class OgmaraClient {
       if (resp.status === 429 && !this.powVerified) {
         const respBody = await resp.json().catch(() => null);
         if (respBody?.error === 'pow_required' && respBody?.challenge) {
-          await this.solvePow(respBody.challenge as PowChallenge, respBody.address);
+          await this.ensurePowSolved(respBody.challenge as PowChallenge, respBody.address);
           return this.postJson(path, body);
         }
       }
@@ -1469,6 +1482,21 @@ export class OgmaraClient {
    * After successful verification, sets `powVerified = true` so subsequent
    * requests don't trigger PoW again.
    */
+  /**
+   * Solve a PoW challenge, deduplicating concurrent callers. The first caller runs the
+   * solve; everyone else awaits the same in-flight promise. Combined with the pre-fetch
+   * wait in the *Envelope helpers, a burst of writes triggers ONE challenge/solve rather
+   * than N pending challenges (avoids the node's 503 "too many pending challenges").
+   */
+  private async ensurePowSolved(challenge: PowChallenge, resolvedAddress?: string): Promise<void> {
+    if (this.powVerified) return;
+    if (!this.powInflight) {
+      this.powInflight = this.solvePow(challenge, resolvedAddress)
+        .finally(() => { this.powInflight = null; });
+    }
+    await this.powInflight;
+  }
+
   private async solvePow(challenge: PowChallenge, resolvedAddress?: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
 

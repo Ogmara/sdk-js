@@ -10,6 +10,7 @@ import { encode, decode } from '@msgpack/msgpack';
 import { aeadEncrypt, aeadDecrypt, wrapKey, unwrapKey, KEY_LEN, type WrappedKey } from './crypto';
 import { buildEnvelope, computeConversationId, computeChannelScope } from './envelope';
 import { MessageType } from './types';
+import { mediaToWire, mediaFromWire, mediaToWireAttachment, type MediaDescriptor } from './media';
 import type { WalletSigner } from './auth';
 
 /** Scope discriminant for a {@link ChannelKeyEnvelopeParams} (matches node `key_scope_kind`). */
@@ -44,11 +45,13 @@ export function randomConvKey(): Uint8Array {
   return requireCsprng().getRandomValues(new Uint8Array(KEY_LEN));
 }
 
-/** Decrypted DM body. `replyTo` rides inside the ciphertext (not leaked to the node). */
+/** Decrypted DM body. `replyTo` + `media` ride inside the ciphertext (not leaked to the node). */
 export interface DmPlaintext {
   text: string;
   /** 32-byte parent msg_id, if this is a reply. */
   replyTo?: Uint8Array;
+  /** Encrypted-media descriptors (P5 / spec 04 §9.2) — per-file keys live here. */
+  media?: MediaDescriptor[];
 }
 
 /** Encrypted DM content for the `DirectMessage` payload. */
@@ -70,7 +73,11 @@ export function encryptDmContent(
   pt: DmPlaintext,
 ): EncryptedDmContent {
   const nonce = requireCsprng().getRandomValues(new Uint8Array(24));
-  const blob = encode({ text: pt.text, reply_to: pt.replyTo ?? null });
+  const blob = encode({
+    text: pt.text,
+    reply_to: pt.replyTo ?? null,
+    media: pt.media && pt.media.length ? pt.media.map(mediaToWire) : null,
+  });
   const content = aeadEncrypt(convKey, nonce, blob, dmContentAad(conversationId, epoch));
   return { content, nonce };
 }
@@ -84,8 +91,16 @@ export function decryptDmContent(
   nonce: Uint8Array,
 ): DmPlaintext {
   const blob = aeadDecrypt(convKey, nonce, content, dmContentAad(conversationId, epoch));
-  const obj = decode(blob) as { text: string; reply_to?: Uint8Array | null };
-  return { text: obj.text, replyTo: obj.reply_to ?? undefined };
+  const obj = decode(blob) as {
+    text: string;
+    reply_to?: Uint8Array | null;
+    media?: Array<Record<string, unknown>> | null;
+  };
+  return {
+    text: obj.text,
+    replyTo: obj.reply_to ?? undefined,
+    media: obj.media && obj.media.length ? obj.media.map(mediaFromWire) : undefined,
+  };
 }
 
 /** Wrap a `conv_key` to a recipient device enc pubkey (ECIES). DM salt = conversation_id. */
@@ -158,6 +173,13 @@ export interface EncryptedDmParams {
   text: string;
   /** Hex msg_id of the parent message — encrypted inside the body, not leaked. */
   replyTo?: string;
+  /**
+   * Encrypted-media descriptors (P5). Each file must already be encrypted +
+   * uploaded ({@link encryptFile} → `uploadMedia(..., { encrypted: true })`); the
+   * per-file keys ride inside the ciphertext and a stripped `{ cid, size }` goes
+   * on the wire (spec 04 §9).
+   */
+  media?: MediaDescriptor[];
 }
 
 /**
@@ -175,6 +197,7 @@ export async function buildEncryptedDirectMessage(
   const { content, nonce } = encryptDmContent(p.convKey, conversationId, p.epoch, {
     text: p.text,
     replyTo: replyToBytes,
+    media: p.media,
   });
   const payload = {
     recipient: p.recipient,
@@ -183,7 +206,9 @@ export async function buildEncryptedDirectMessage(
     nonce,
     key_epoch: p.epoch,
     reply_to: null,
-    attachments: [] as unknown[],
+    // Stripped on-wire attachments (spec 04 §9.3) — node lifecycle only; the real
+    // descriptors (mime/filename/keys) live encrypted inside `content`.
+    attachments: (p.media ?? []).map(mediaToWireAttachment),
   };
   return buildEnvelope(signer, MessageType.DirectMessage, payload);
 }
@@ -255,10 +280,17 @@ export interface EncryptedChannelMessageParams {
   mentions?: string[];
   contentRating?: 'general' | 'teen' | 'mature' | 'explicit';
   /**
-   * Attachments — carried as PLAINTEXT metadata (IPFS CID, mime, size). Only the
-   * TEXT is encrypted in P4; per-file media encryption is P5 (D6). An encrypted
-   * channel can therefore still carry images/files (the node's encryption gate
-   * allows an encrypted or attachment-only message; it only blocks plaintext text).
+   * Encrypted-media descriptors (P5 / spec 04 §9). Each file is encrypted with its
+   * own key BEFORE upload ({@link encryptFile} → `uploadMedia(..., { encrypted: true })`);
+   * the keys ride inside `enc_content` and only a stripped `{ cid, size }` reaches the
+   * wire. Used for BOTH private and public encrypted channels — public media is
+   * encrypted too (anti-bulk-readout; spec 04 §9). Preferred over `attachments`.
+   */
+  media?: MediaDescriptor[];
+  /**
+   * Legacy PLAINTEXT attachment metadata (IPFS CID, mime, size) — retained for
+   * callers that intentionally attach unencrypted media to an encrypted channel.
+   * New code should use {@link media} so the file bytes are encrypted too.
    */
   attachments?: Array<{
     cid: string;
@@ -283,20 +315,36 @@ export async function buildEncryptedChannelMessage(
 ): Promise<Uint8Array> {
   if (p.epoch < 1) throw new Error('channel message requires key_epoch >= 1');
   const scope = computeChannelScope(p.channelId);
-  const { content, nonce } = encryptDmContent(p.convKey, scope, p.epoch, { text: p.text });
-  const payload = {
-    channel_id: p.channelId,
-    content: '', // text rides in enc_content
-    content_rating: CHANNEL_CONTENT_RATING[p.contentRating ?? 'general'] ?? 0,
-    reply_to: p.replyTo ? hexToBytes32(p.replyTo) : null,
-    mentions: p.mentions ?? [],
-    attachments: (p.attachments ?? []).map((a) => ({
+  const { content, nonce } = encryptDmContent(p.convKey, scope, p.epoch, {
+    text: p.text,
+    media: p.media,
+  });
+  // Wire attachments: stripped entries for encrypted media (spec 04 §9.3) plus any
+  // intentionally-plaintext legacy attachments. Encrypted-media keys/mime/filename
+  // are NOT here — they ride inside enc_content.
+  const wireAttachments = [
+    ...(p.media ?? []).map(mediaToWireAttachment).map((a) => ({
+      cid: a.cid,
+      mime_type: a.mime_type,
+      size_bytes: a.size_bytes,
+      filename: null,
+      thumbnail_cid: null,
+    })),
+    ...(p.attachments ?? []).map((a) => ({
       cid: a.cid,
       mime_type: a.mime_type,
       size_bytes: a.size_bytes,
       filename: a.filename ?? null,
       thumbnail_cid: a.thumbnail_cid ?? null,
     })),
+  ];
+  const payload = {
+    channel_id: p.channelId,
+    content: '', // text rides in enc_content
+    content_rating: CHANNEL_CONTENT_RATING[p.contentRating ?? 'general'] ?? 0,
+    reply_to: p.replyTo ? hexToBytes32(p.replyTo) : null,
+    mentions: p.mentions ?? [],
+    attachments: wireAttachments,
     enc_content: content,
     enc_nonce: nonce,
     key_epoch: p.epoch,

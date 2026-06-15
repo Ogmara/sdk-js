@@ -658,12 +658,23 @@ export class OgmaraClient {
     return { ok: true };
   }
 
-  /** POST /api/v1/media/upload — upload media to IPFS via the node. */
-  async uploadMedia(file: Blob, filename?: string): Promise<UploadResult> {
+  /**
+   * POST /api/v1/media/upload — upload media to IPFS via the node.
+   *
+   * Pass `{ encrypted: true }` for an opaque E2E-encrypted blob (P5 / spec 04 §9.4):
+   * the node skips its MIME allowlist (which rejects `application/octet-stream`) and
+   * stores the ciphertext as-is. Encrypt with {@link encryptFile} first.
+   */
+  async uploadMedia(
+    file: Blob,
+    filename?: string,
+    opts?: { encrypted?: boolean },
+  ): Promise<UploadResult> {
     if (!this.signer) throw new Error('Signer required');
 
     const formData = new FormData();
     formData.append('file', file, filename);
+    if (opts?.encrypted) formData.append('encrypted', '1');
 
     const headers = await this.authHeaders('POST', '/api/v1/media/upload');
     const url = `${this.nodeUrl}/api/v1/media/upload`;

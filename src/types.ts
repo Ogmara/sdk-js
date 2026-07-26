@@ -428,6 +428,20 @@ export const MessageType = {
   NewsRepost: 0x25,
 } as const;
 
+/**
+ * Reverse map: numeric `msg_type` → Rust enum variant NAME string.
+ *
+ * rmp-serde deserializes C-like enums from their variant NAME (string), not the
+ * discriminant integer, so an envelope's `msg_type` must be the name. This map is
+ * DERIVED from {@link MessageType} so it can never drift out of sync with the enum
+ * — adding a new type here is automatic. (A hand-maintained copy previously omitted
+ * `KeyVaultSync`, which silently broke every P3 vault backup with "Unknown message
+ * type: 56".) Single source of truth for both `envelope.ts` and `encryption.ts`.
+ */
+export const MSG_TYPE_NAME: Record<number, string> = Object.fromEntries(
+  Object.entries(MessageType).map(([name, value]) => [value, name]),
+);
+
 /** Follow payload. */
 export interface FollowPayload {
   target: string;

@@ -5,6 +5,34 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.40.1] - 2026-07-26
+
+### Fixed
+
+- **P3 key-vault backup was completely broken** — every `buildKeyVaultSync` threw
+  `Unknown message type: 56` and no vault was ever published (so cross-device key
+  recovery could never work and `GET /api/v1/key-vault` always 404'd). Root cause: the
+  hand-maintained `MSG_TYPE_NAME` map in `envelope.ts` (numeric `msg_type` → Rust variant
+  NAME, required because rmp-serde decodes C-like enums by name) was never updated with
+  `KeyVaultSync` (0x38) when P3 shipped. The node accepted the type all along; the SDK
+  threw before sending.
+
+### Changed
+
+- `MSG_TYPE_NAME` is now **derived** from the `MessageType` enum
+  (`Object.fromEntries(Object.entries(MessageType)…)`) in `types.ts` and is the single
+  source of truth for both `envelope.ts` and `encryption.ts`. This eliminates the
+  hand-maintained parallel map that silently drifted, so any future message type is
+  covered automatically. No wire/behavior change for existing types.
+
+### Security
+
+- `npm audit fix`: bumped transitive `vite`/`postcss` (pulled in via the `vitest` dev
+  dependency) to patched versions, clearing 2 high advisories (postcss source-map path
+  traversal; vite `launch-editor`/`fs.deny` Windows issues). **Dev/test tooling only** —
+  none of these ship in the built SDK; runtime deps are just `@msgpack/msgpack` and
+  `@noble/*`. `npm audit` now reports 0 vulnerabilities.
+
 ## [0.40.0] - 2026-06-15
 
 ### Added

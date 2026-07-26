@@ -17,6 +17,7 @@ import { keccak_256 } from '@noble/hashes/sha3';
 import type { WalletSigner } from './auth';
 import {
   MessageType,
+  MSG_TYPE_NAME,
   type Attachment,
   type ContentRating,
   type ChatMessageData,
@@ -43,56 +44,8 @@ import {
   type CounterVoteData,
 } from './types';
 
-/**
- * Map numeric MessageType to Rust enum variant name string.
- *
- * rmp-serde deserializes C-like enums from their variant NAME (string),
- * not their discriminant value (integer). If we send the integer 0x20,
- * rmp-serde interprets it as variant INDEX 32 (= Report), not
- * discriminant 0x20 (= NewsPost). So we must encode msg_type as a string.
- */
-const MSG_TYPE_NAME: Record<number, string> = {
-  [MessageType.ChatMessage]: 'ChatMessage',
-  [MessageType.ChatEdit]: 'ChatEdit',
-  [MessageType.ChatDelete]: 'ChatDelete',
-  [MessageType.ChatReaction]: 'ChatReaction',
-  [MessageType.DirectMessage]: 'DirectMessage',
-  [MessageType.DirectMessageEdit]: 'DirectMessageEdit',
-  [MessageType.DirectMessageDelete]: 'DirectMessageDelete',
-  [MessageType.DirectMessageReaction]: 'DirectMessageReaction',
-  [MessageType.ChannelCreate]: 'ChannelCreate',
-  [MessageType.ChannelUpdate]: 'ChannelUpdate',
-  [MessageType.ChannelJoin]: 'ChannelJoin',
-  [MessageType.ChannelLeave]: 'ChannelLeave',
-  [MessageType.ChannelAddModerator]: 'ChannelAddModerator',
-  [MessageType.ChannelRemoveModerator]: 'ChannelRemoveModerator',
-  [MessageType.ChannelKick]: 'ChannelKick',
-  [MessageType.ChannelBan]: 'ChannelBan',
-  [MessageType.ChannelUnban]: 'ChannelUnban',
-  [MessageType.ChannelPinMessage]: 'ChannelPinMessage',
-  [MessageType.ChannelUnpinMessage]: 'ChannelUnpinMessage',
-  [MessageType.ChannelInvite]: 'ChannelInvite',
-  [MessageType.ChannelDelete]: 'ChannelDelete',
-  [MessageType.NewsPost]: 'NewsPost',
-  [MessageType.NewsEdit]: 'NewsEdit',
-  [MessageType.NewsDelete]: 'NewsDelete',
-  [MessageType.NewsComment]: 'NewsComment',
-  [MessageType.NewsReaction]: 'NewsReaction',
-  [MessageType.NewsRepost]: 'NewsRepost',
-  [MessageType.ProfileUpdate]: 'ProfileUpdate',
-  [MessageType.DeviceDelegation]: 'DeviceDelegation',
-  [MessageType.DeviceRevocation]: 'DeviceRevocation',
-  [MessageType.SettingsSync]: 'SettingsSync',
-  [MessageType.Follow]: 'Follow',
-  [MessageType.Unfollow]: 'Unfollow',
-  [MessageType.DeviceEncBinding]: 'DeviceEncBinding',
-  [MessageType.DeviceEncRevoke]: 'DeviceEncRevoke',
-  [MessageType.Report]: 'Report',
-  [MessageType.CounterVote]: 'CounterVote',
-  [MessageType.ChannelMute]: 'ChannelMute',
-  [MessageType.DeletionRequest]: 'DeletionRequest',
-  [MessageType.ChannelKeyEnvelope]: 'ChannelKeyEnvelope',
-};
+// `MSG_TYPE_NAME` (numeric msg_type → Rust variant NAME) is derived from the
+// `MessageType` enum in `./types` so it can never drift out of sync. See there.
 
 // --- Content rating / visibility numeric mappings ---
 

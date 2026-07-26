@@ -12,12 +12,7 @@
 import { getPublicKey as x25519GetPublicKey, randomPrivateKey as x25519Random } from './x25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { encode } from '@msgpack/msgpack';
-import { MessageType } from './types';
-
-const MSG_TYPE_NAME: Record<number, string> = {
-  [MessageType.DeviceEncBinding]: 'DeviceEncBinding',
-  [MessageType.DeviceEncRevoke]: 'DeviceEncRevoke',
-};
+import { MessageType, MSG_TYPE_NAME } from './types';
 
 // --- small helpers ---------------------------------------------------------
 

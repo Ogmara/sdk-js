@@ -369,6 +369,10 @@ export type WsEvent =
   // client wraps the channel epoch key to a new joiner (reliable key delivery),
   // and a kicked/banned member learns it lost access. action: join|leave|kick|ban.
   | { type: 'channel_members_changed'; channel_id: number; action: string; member: string; key_epoch_floor?: number }
+  // The channel was deleted by its creator. Sent to every member's node (host or
+  // federated) that captured a member list at delete time — clients should drop
+  // it from their local joined-channels list and bounce out of its view.
+  | { type: 'channel_deleted'; channel_id: number }
   | { type: 'error'; code: number; message: string };
 
 /** SDK client configuration. */

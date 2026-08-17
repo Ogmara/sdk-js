@@ -31,6 +31,7 @@ import {
   type ChannelCreateData,
   type ChannelUpdateData,
   type ChannelMuteData,
+  type ChannelUnmuteData,
   type ChatEditData,
   type ChatDeleteData,
   type ChatReactionData,
@@ -250,6 +251,13 @@ function channelMutePayload(data: ChannelMuteData): Record<string, unknown> {
     target_user: data.targetUser,
     duration_secs: data.durationSecs ?? 0,
     reason: data.reason ?? null,
+  };
+}
+
+function channelUnmutePayload(data: ChannelUnmuteData): Record<string, unknown> {
+  return {
+    channel_id: data.channelId,
+    target_user: data.targetUser,
   };
 }
 
@@ -484,6 +492,11 @@ export async function buildChannelUpdate(signer: WalletSigner, data: ChannelUpda
 
 export async function buildChannelMute(signer: WalletSigner, data: ChannelMuteData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.ChannelMute, channelMutePayload(data));
+}
+
+/** Reverses a ChannelMute (l2-node 0.93.0+, audit W30). */
+export async function buildChannelUnmute(signer: WalletSigner, data: ChannelUnmuteData): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelUnmute, channelUnmutePayload(data));
 }
 
 // --- v0.11.0 message action builders ---

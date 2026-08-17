@@ -5,6 +5,27 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.45.0] - 2026-08-17
+
+### Added
+
+- **`buildChannelUnmute` + `OgmaraClient.unmuteUser()`** (l2-node final
+  pre-mainnet audit W30). First SDK-level way to reverse a `ChannelMute` —
+  `Storage::remove_channel_mute` on the node existed but had zero callers
+  before l2-node 0.93.0, so a permanent mute (`durationSecs: 0`) was
+  previously irrevocable from any client. Mirrors `buildUnban`/`unbanUser`:
+  minimal payload (`channelId`/`targetUser`, no reason/duration), `DELETE
+  /api/v1/channels/:channelId/mute/:address`.
+
+### Changed
+
+- **`OgmaraClient.muteUser()` now posts to the dedicated
+  `/api/v1/channels/:channelId/mute/:address` endpoint** instead of the
+  generic `/api/v1/messages` (l2-node 0.93.0+). Not a correctness fix on
+  its own — the node's generic path already gossips a `ChannelMute` once
+  it has a bridge-topic mapping, which l2-node 0.93.0 also added — this is
+  purely parity with `banUser`/`unbanUser`'s endpoint shape.
+
 ## [0.44.0] - 2026-08-17
 
 ### Added

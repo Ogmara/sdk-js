@@ -98,7 +98,7 @@ export {
   buildEnvelope, buildChatMessage, buildNewsPost, buildNewsComment, buildProfileUpdate,
   buildFollow, buildUnfollow, buildReaction, buildRepost, buildDirectMessage,
   computeConversationId, computeChannelScope, buildChannelCreate, buildChannelUpdate, buildChannelJoin,
-  buildChannelLeave, buildChannelDelete, buildChannelMute,
+  buildChannelLeave, buildChannelDelete, buildChannelMute, buildChannelUnmute,
   buildChatEdit, buildChatDelete, buildChatReaction,
   buildDmEdit, buildDmDelete, buildDmReaction,
   buildNewsEdit, buildNewsDelete,

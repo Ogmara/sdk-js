@@ -419,6 +419,7 @@ export const MessageType = {
   Report: 0x40,
   CounterVote: 0x41,
   ChannelMute: 0x42,
+  ChannelUnmute: 0x43,
   Follow: 0x34,
   Unfollow: 0x35,
   DeviceEncBinding: 0x36,
@@ -582,6 +583,12 @@ export interface ChannelMuteData {
   /** Duration in seconds (0 = permanent). */
   durationSecs?: number;
   reason?: string;
+}
+
+/** Channel unmute data for reversing a mute (l2-node 0.93.0+, audit W30). */
+export interface ChannelUnmuteData {
+  channelId: number;
+  targetUser: string;
 }
 
 /** Channel creation response. */

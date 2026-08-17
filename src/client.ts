@@ -44,6 +44,7 @@ import {
   buildChannelLeave,
   buildChannelDelete,
   buildChannelMute,
+  buildChannelUnmute,
   buildChatEdit,
   buildChatDelete,
   buildChatReaction,
@@ -99,6 +100,7 @@ import type {
   ChannelCreateData,
   ChannelUpdateData,
   ChannelMuteData,
+  ChannelUnmuteData,
   RegisterDeviceRequest,
   RegisterDeviceResponse,
   RevokeDeviceResponse,
@@ -645,11 +647,36 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
-  /** POST /api/v1/messages — mute a user in a channel (moderator action). */
+  /**
+   * POST /api/v1/channels/:channelId/mute/:address — mute a user in a
+   * channel (moderator action). Previously posted to the generic
+   * /api/v1/messages endpoint; switched to the dedicated endpoint for
+   * parity with banUser/unbanUser (l2-node 0.93.0+, audit W30) — not a
+   * correctness fix on its own, since the node's generic path already
+   * gossips a ChannelMute once it has a bridge-topic mapping, which l2-node
+   * 0.93.0 also added.
+   */
   async muteUser(data: ChannelMuteData): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
     const envelope = await buildChannelMute(this.signer, data);
-    await this.postEnvelope('/api/v1/messages', envelope);
+    await this.postEnvelope(
+      `/api/v1/channels/${data.channelId}/mute/${encodeURIComponent(data.targetUser)}`,
+      envelope,
+    );
+  }
+
+  /**
+   * DELETE /api/v1/channels/:channelId/mute/:address — unmute a user in a
+   * channel (moderator action). Reverses muteUser (l2-node 0.93.0+, audit
+   * W30) — a permanent mute (durationSecs: 0) had no way back before this.
+   */
+  async unmuteUser(data: ChannelUnmuteData): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildChannelUnmute(this.signer, data);
+    await this.deleteEnvelope(
+      `/api/v1/channels/${data.channelId}/mute/${encodeURIComponent(data.targetUser)}`,
+      envelope,
+    );
   }
 
   /**

@@ -14,6 +14,7 @@ import { computeConversationId, computeChannelScope } from './envelope';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { buildEncryptedChannelMessage } from './dm';
 import { WalletSigner } from './auth';
+import { buildDeletionRequest } from './envelope';
 
 const range = (start: number, end: number): Uint8Array =>
   Uint8Array.from({ length: end - start + 1 }, (_, i) => start + i);
@@ -65,6 +66,7 @@ describe('DM E2E (P1)', () => {
 
   it('builds an encrypted DM edit whose enc_content decrypts to the new text', async () => {
     const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
     const recipient = 'klv1bbb';
     const convKey = randomConvKey();
     const msgId = 'ab'.repeat(32); // 32-byte hex
@@ -113,6 +115,7 @@ describe('DM E2E (P1)', () => {
 
   it('builds an encrypted channel message: text in enc_content, metadata plaintext', async () => {
     const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
     const convKey = randomConvKey();
     const envBytes = await buildEncryptedChannelMessage(signer, {
       channelId: 12,
@@ -136,5 +139,38 @@ describe('DM E2E (P1)', () => {
     const scope = computeChannelScope(12);
     const out = decryptDmContent(convKey, scope, 3, payload.enc_content, payload.enc_nonce);
     expect(out.text).toBe('secret channel msg 🛡️');
+  });
+});
+
+describe('buildDeletionRequest (W23, right-to-erasure)', () => {
+  it('sends delete_type as the Rust variant NAME string, not a number', async () => {
+    // Regression: rmp-serde accepts a plain integer for a unit enum on
+    // decode too, but as the 0-based DECLARATION-ORDER index — which does
+    // NOT match DeletionType's explicit #[repr(u8)] discriminants
+    // (SingleMessage=0x01 but serde index 0; AllUserContent=0x02 but serde
+    // index 1). Sending the discriminant instead of the name would silently
+    // delete the WRONG thing. Verified against the node's actual decoder
+    // before writing this (see l2-node routes.rs
+    // deletion_type_wire_encoding_is_variant_name_not_discriminant).
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    const msgId = 'ab'.repeat(32);
+    const envBytes = await buildDeletionRequest(signer, 'SingleMessage', msgId);
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as { delete_type: string; target_id: Uint8Array | null };
+    expect(payload.delete_type).toBe('SingleMessage');
+    expect(typeof payload.delete_type).toBe('string');
+    expect(payload.target_id).toBeInstanceOf(Uint8Array);
+    expect(payload.target_id!.length).toBe(32);
+  });
+
+  it('omits target_id for AllUserContent (account deletion)', async () => {
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    const envBytes = await buildDeletionRequest(signer, 'AllUserContent');
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as { delete_type: string; target_id: unknown };
+    expect(payload.delete_type).toBe('AllUserContent');
+    expect(payload.target_id).toBeNull();
   });
 });

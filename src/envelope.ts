@@ -16,6 +16,7 @@ import { encode } from '@msgpack/msgpack';
 import { keccak_256 } from '@noble/hashes/sha3';
 import type { WalletSigner } from './auth';
 import {
+  PROTOCOL_VERSION,
   MessageType,
   MSG_TYPE_NAME,
   type Attachment,
@@ -331,11 +332,11 @@ export async function buildEnvelope(
 
   // 2. Compute timestamp and msg_id
   const timestamp = Date.now();
-  const msgId = signer.computeMsgId(new Uint8Array(payloadBytes), timestamp);
+  const msgId = await signer.computeMsgId(new Uint8Array(payloadBytes), timestamp);
 
   // 3. Sign the envelope
   const signature = await signer.signEnvelope(
-    1, // protocol version
+    PROTOCOL_VERSION,
     msgType,
     msgId,
     timestamp,
@@ -349,7 +350,7 @@ export async function buildEnvelope(
   if (!msgTypeName) throw new Error(`Unknown message type: ${msgType}`);
 
   const envelope = {
-    version: 1,
+    version: PROTOCOL_VERSION,
     msg_type: msgTypeName,
     msg_id: msgId,
     author: signer.signingAddress,
@@ -388,6 +389,25 @@ export async function buildFollow(signer: WalletSigner, target: string): Promise
 
 export async function buildUnfollow(signer: WalletSigner, target: string): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.Unfollow, followPayload(target));
+}
+
+/**
+ * Build a `DeviceRevocation` (0x32) envelope. `devicePubKeyHex` is the
+ * 64-char hex Ed25519 public key of the device to revoke (NOT its `ogd1…`
+ * address). Standard envelope signing — `signer` can be the wallet itself or
+ * any OTHER device already delegated to it (identity.resolve maps either to
+ * the wallet, matching the REST `DELETE /api/v1/devices/{addr}` "any sibling
+ * device can revoke" model). Unlike that REST endpoint, submitting this via
+ * `POST /api/v1/messages` propagates network-wide (audit final pre-mainnet
+ * C3 — see `OgmaraClient.revokeDevice`).
+ */
+export async function buildDeviceRevocation(
+  signer: WalletSigner,
+  devicePubKeyHex: string,
+): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DeviceRevocation, {
+    device_pub_key: devicePubKeyHex.toLowerCase(),
+  });
 }
 
 export async function buildReaction(signer: WalletSigner, data: ReactionPayload): Promise<Uint8Array> {
@@ -657,4 +677,26 @@ export async function buildReport(signer: WalletSigner, data: ReportData): Promi
 
 export async function buildCounterVote(signer: WalletSigner, data: CounterVoteData): Promise<Uint8Array> {
   return buildEnvelope(signer, MessageType.CounterVote, counterVotePayload(data));
+}
+
+/**
+ * Build a `DeletionRequest` (0x50) envelope (protocol §3.13, spec 08-compliance
+ * §3.5 — right-to-erasure). `deleteType` MUST be the Rust variant NAME string,
+ * NOT a number: rmp-serde's default wire encoding for a unit enum IS the
+ * variant name, but it ALSO accepts a plain integer on decode as the 0-based
+ * DECLARATION-ORDER index — which does NOT match `DeletionType`'s explicit
+ * `#[repr(u8)]` discriminants (`SingleMessage = 0x01` but serde index 0;
+ * `AllUserContent = 0x02` but serde index 1). Sending the numeric discriminant
+ * would silently decode as the WRONG variant (delete-one-message could decode
+ * as delete-everything). Always send the string.
+ */
+export async function buildDeletionRequest(
+  signer: WalletSigner,
+  deleteType: 'SingleMessage' | 'AllUserContent',
+  targetMsgIdHex?: string,
+): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.DeletionRequest, {
+    delete_type: deleteType,
+    target_id: targetMsgIdHex ? hexToBytes(targetMsgIdHex) : null,
+  });
 }

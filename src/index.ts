@@ -102,7 +102,8 @@ export {
   buildChatEdit, buildChatDelete, buildChatReaction,
   buildDmEdit, buildDmDelete, buildDmReaction,
   buildNewsEdit, buildNewsDelete,
-  buildSettingsSync, buildKeyVaultSync, buildReport, buildCounterVote,
+  buildSettingsSync, buildKeyVaultSync, buildReport, buildCounterVote, buildDeviceRevocation,
+  buildDeletionRequest,
 } from './envelope';
 export {
   VAULT_SIGN_CLAIM,

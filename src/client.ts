@@ -20,6 +20,7 @@
 import type { WalletSigner, AuthHeaders, NodeBinding } from './auth';
 import type { PowChallenge } from './pow';
 import { solveChallengeAsync } from './pow';
+import { addressToPubkey } from './encryption';
 import {
   buildChatMessage,
   buildNewsPost,
@@ -55,6 +56,8 @@ import {
   buildKeyVaultSync,
   buildReport,
   buildCounterVote,
+  buildDeviceRevocation,
+  buildDeletionRequest,
 } from './envelope';
 import type {
   Health,
@@ -190,6 +193,12 @@ export class OgmaraClient {
   /** Set the wallet signer for authenticated endpoints. */
   withSigner(signer: WalletSigner): this {
     this.signer = signer;
+    // Wire lazy network resolution (audit 2026-08-16 C1): envelope building
+    // happens before any auth header is signed, so the signer resolves its
+    // own network on first use via this callback rather than requiring every
+    // caller to await node discovery up front. `getNodeBinding()` caches, so
+    // this is a no-op fetch after the first call.
+    signer.networkProvider = () => this.getNodeBinding().then((b) => b.network);
     return this;
   }
 
@@ -1061,6 +1070,30 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
+  /**
+   * POST /api/v1/messages — request deletion of a single message
+   * (right-to-erasure, spec 08-compliance §3.5). Only the message's own
+   * author can request this — the node's apply arm deletes purely by
+   * `resolved_author`, so this can never target someone else's content.
+   */
+  async deleteMessageRequest(msgIdHex: string): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildDeletionRequest(this.signer, 'SingleMessage', msgIdHex);
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /**
+   * POST /api/v1/messages — request deletion of ALL of the calling wallet's
+   * content network-wide (account deletion / right-to-erasure, spec
+   * 08-compliance §3.5). Irreversible. The wallet's on-chain registration is
+   * untouched (blockchain is immutable) — this only purges L2 content.
+   */
+  async deleteAllContentRequest(): Promise<void> {
+    if (!this.signer) throw new Error('Signer required');
+    const envelope = await buildDeletionRequest(this.signer, 'AllUserContent');
+    await this.postEnvelope('/api/v1/messages', envelope);
+  }
+
   // --- Device Identity Management ---
 
   /**
@@ -1089,9 +1122,11 @@ export class OgmaraClient {
     if (!this.signer) throw new Error('Signer required');
 
     // Reconstruct the EXACT canonical claim the wallet signed (lowercase
-    // device pubkey — see buildDeviceClaim) and co-sign it with the device key.
+    // device pubkey, network-bound — see buildDeviceClaim, audit 2026-08-16
+    // C1 follow-up) and co-sign it with the device key.
+    const network = await this.getNetwork();
     const devicePubkeyHex = this.signer.publicKeyHex.toLowerCase();
-    const claimString = `ogmara-device-claim:${devicePubkeyHex}:${walletAddress}:${timestamp}`;
+    const claimString = `ogmara-device-claim:${network}:${devicePubkeyHex}:${walletAddress}:${timestamp}`;
     const deviceSigBytes = await this.signer.signKleverMessage(
       new TextEncoder().encode(claimString),
     );
@@ -1113,11 +1148,25 @@ export class OgmaraClient {
     return result;
   }
 
-  /** Revoke a device registration. Only the owning wallet can revoke. */
+  /**
+   * Revoke a device registration. Only the owning wallet (or a sibling
+   * device already delegated to it) can revoke.
+   *
+   * Submits a signed `DeviceRevocation` envelope via `POST /api/v1/messages`
+   * instead of the legacy `DELETE /api/v1/devices/{addr}` REST endpoint —
+   * that endpoint authorizes via REST auth headers only (no signed envelope),
+   * so it can't be gossiped and left every OTHER node trusting a revoked
+   * device until a slow independent catch-up (audit final pre-mainnet C3).
+   * The envelope path applies locally AND propagates network-wide.
+   */
   async revokeDevice(deviceAddress: string): Promise<RevokeDeviceResponse> {
-    return this.deleteAuthenticated<RevokeDeviceResponse>(
-      `/api/v1/devices/${encodeURIComponent(deviceAddress)}`,
-    );
+    if (!this.signer) throw new Error('Signer required');
+    const devicePubKeyHex = Array.from(addressToPubkey(deviceAddress), (b) =>
+      b.toString(16).padStart(2, '0'),
+    ).join('');
+    const envelope = await buildDeviceRevocation(this.signer, devicePubKeyHex);
+    await this.postEnvelope('/api/v1/messages', envelope);
+    return { ok: true, device_address: deviceAddress };
   }
 
   /** List all devices registered to the authenticated wallet. */
@@ -1185,6 +1234,17 @@ export class OgmaraClient {
     this.knownNodes = resp.nodes
       .map((n) => n.api_endpoint)
       .filter((url): url is string => !!url && url.length > 0);
+  }
+
+  /**
+   * Resolve (and cache) this client's target Klever network ("testnet"/
+   * "mainnet"), from `/health`. Needed by envelope builders that don't take
+   * a `WalletSigner` — e.g. `buildDeviceEncBinding`/`buildDeviceEncRevoke`
+   * (`@ogmara/sdk`'s `encryption.ts`), whose `network` parameter binds the
+   * envelope's msg_id to this network (audit 2026-08-16 C1).
+   */
+  async getNetwork(): Promise<string> {
+    return (await this.getNodeBinding()).network;
   }
 
   // --- Internal helpers ---
@@ -1452,30 +1512,6 @@ export class OgmaraClient {
         }
       }
 
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
-      }
-      return resp.json();
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  /** DELETE with auth headers (no body). */
-  private async deleteAuthenticated<T>(path: string): Promise<T> {
-    if (!this.signer) throw new Error('Signer required');
-    const headers = await this.authHeaders('DELETE', path);
-    const url = `${this.nodeUrl}${path}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      const resp = await fetch(url, {
-        method: 'DELETE',
-        headers: { ...headers },
-        signal: controller.signal,
-      });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);

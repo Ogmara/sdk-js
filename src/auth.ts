@@ -73,6 +73,44 @@ export class WalletSigner {
    */
   walletAddress?: string;
 
+  /**
+   * The Klever network ("testnet" / "mainnet") this signer is bound to for
+   * envelope construction (`computeMsgId` / `signEnvelope`).
+   *
+   * Set this directly for offline/CLI signing where the network is known
+   * upfront. `OgmaraClient.withSigner` instead wires `networkProvider` so it
+   * gets resolved (and cached here) lazily from the target node's
+   * `GET /api/v1/health` on first use — callers building envelopes never
+   * need to await node discovery themselves.
+   */
+  network?: string;
+
+  /**
+   * Async resolver for `network`, used when it isn't known upfront. Wired by
+   * `OgmaraClient.withSigner` to the client's cached node binding.
+   */
+  networkProvider?: () => Promise<string>;
+
+  /**
+   * Resolve `network`, throwing if neither it nor `networkProvider` is set.
+   *
+   * `computeMsgId`/`signEnvelope` fail loudly rather than sign an unbound
+   * preimage — audit 2026-08-16 C1: a signature/msg_id with no network
+   * binding can be replayed across testnet/mainnet since both share the
+   * same wallet keys.
+   */
+  private async resolveNetwork(): Promise<string> {
+    if (this.network) return this.network;
+    if (this.networkProvider) {
+      this.network = await this.networkProvider();
+      return this.network;
+    }
+    throw new Error(
+      'WalletSigner.network is unset — either set it directly, or attach this signer via ' +
+        'OgmaraClient.withSigner() before building/signing an envelope',
+    );
+  }
+
   private constructor(privateKey: Uint8Array, publicKey: Uint8Array, address: string) {
     this.privateKey = privateKey;
     this.publicKey = publicKey;
@@ -208,7 +246,15 @@ export class WalletSigner {
     return ed.signAsync(hash, this.privateKey);
   }
 
-  /** Sign an Ogmara protocol message (for envelope construction). */
+  /**
+   * Sign an Ogmara protocol message (for envelope construction).
+   *
+   * Format (protocol v2, audit 2026-08-16 C1): `"ogmara-msg:" + networkLen(1)
+   * + network + version(1) + msgType(1) + msgId(32) + timestamp(8) +
+   * payload`. `network` ("testnet"/"mainnet") binds the signature to a
+   * single Klever network — mirrors `signing::ogmara_signed_bytes` in the
+   * node (l2-node `crypto/signing.rs`); the two must never drift apart.
+   */
   async signEnvelope(
     version: number,
     msgType: number,
@@ -216,15 +262,19 @@ export class WalletSigner {
     timestamp: number,
     payload: Uint8Array,
   ): Promise<Uint8Array> {
+    const network = await this.resolveNetwork();
     const domainSep = new TextEncoder().encode('ogmara-msg:');
+    const networkBytes = new TextEncoder().encode(network);
     const tsBytes = new Uint8Array(8);
     new DataView(tsBytes.buffer).setBigUint64(0, BigInt(timestamp));
 
     const data = new Uint8Array(
-      domainSep.length + 1 + 1 + 32 + 8 + payload.length,
+      domainSep.length + 1 + networkBytes.length + 1 + 1 + 32 + 8 + payload.length,
     );
     let offset = 0;
     data.set(domainSep, offset); offset += domainSep.length;
+    data[offset++] = networkBytes.length;
+    data.set(networkBytes, offset); offset += networkBytes.length;
     data[offset++] = version;
     data[offset++] = msgType;
     data.set(msgId, offset); offset += 32;
@@ -235,14 +285,23 @@ export class WalletSigner {
     return ed.signAsync(hash, this.privateKey);
   }
 
-  /** Compute a message ID: Keccak-256(author_pubkey + payload + timestamp_bytes). */
-  computeMsgId(payload: Uint8Array, timestamp: number): Uint8Array {
+  /**
+   * Compute a message ID (protocol v2, audit 2026-08-16 C1):
+   * `Keccak-256(networkLen(1) + network + author_pubkey + payload + timestamp_bytes)`.
+   * Mirrors `crypto::compute_msg_id` in the node — must never drift apart.
+   */
+  async computeMsgId(payload: Uint8Array, timestamp: number): Promise<Uint8Array> {
+    const network = await this.resolveNetwork();
+    const networkBytes = new TextEncoder().encode(network);
     const tsBytes = new Uint8Array(8);
     new DataView(tsBytes.buffer).setBigUint64(0, BigInt(timestamp));
-    const data = new Uint8Array(32 + payload.length + 8);
-    data.set(this.publicKey, 0);
-    data.set(payload, 32);
-    data.set(tsBytes, 32 + payload.length);
+    const data = new Uint8Array(1 + networkBytes.length + 32 + payload.length + 8);
+    let offset = 0;
+    data[offset++] = networkBytes.length;
+    data.set(networkBytes, offset); offset += networkBytes.length;
+    data.set(this.publicKey, offset); offset += 32;
+    data.set(payload, offset); offset += payload.length;
+    data.set(tsBytes, offset);
     return keccak_256(data);
   }
 }
@@ -251,24 +310,32 @@ export class WalletSigner {
  * Build a device claim string for device-to-wallet registration.
  *
  * The claim format is:
- *   `ogmara-device-claim:{devicePubkeyHex}:{walletAddress}:{timestamp}`
+ *   `ogmara-device-claim:{network}:{devicePubkeyHex}:{walletAddress}:{timestamp}`
  *
  * This string must be signed by the wallet key (using Klever message signing)
  * to prove the wallet authorized this device.
  *
+ * `network` ("testnet"/"mainnet", e.g. from `OgmaraClient.getNetwork()`) binds
+ * the claim to a single Klever network (audit 2026-08-16 C1 follow-up) — this
+ * claim's signature is the sole authority (it never covers a msg_id), so
+ * without `network` a claim captured on one network could be replayed as
+ * valid on the other.
+ *
  * @param devicePubkeyHex - Hex-encoded device Ed25519 public key (64 chars)
  * @param walletAddress - Wallet's klv1... address
+ * @param network - Target node's Klever network ("testnet"/"mainnet")
  * @param timestamp - Unix timestamp in milliseconds (defaults to Date.now())
  * @returns The claim string and timestamp used
  */
 export function buildDeviceClaim(
   devicePubkeyHex: string,
   walletAddress: string,
+  network: string,
   timestamp?: number,
 ): { claimString: string; timestamp: number } {
   const ts = timestamp ?? Date.now();
   return {
-    claimString: `ogmara-device-claim:${devicePubkeyHex.toLowerCase()}:${walletAddress}:${ts}`,
+    claimString: `ogmara-device-claim:${network}:${devicePubkeyHex.toLowerCase()}:${walletAddress}:${ts}`,
     timestamp: ts,
   };
 }

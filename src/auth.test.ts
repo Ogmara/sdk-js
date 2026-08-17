@@ -70,17 +70,38 @@ describe('WalletSigner', () => {
 
   it('should compute deterministic msg_id', async () => {
     const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
     const payload = new TextEncoder().encode('hello');
-    const id1 = signer.computeMsgId(payload, 12345);
-    const id2 = signer.computeMsgId(payload, 12345);
+    const id1 = await signer.computeMsgId(payload, 12345);
+    const id2 = await signer.computeMsgId(payload, 12345);
     expect(id1).toEqual(id2);
+  });
+
+  it('should bind msg_id to the network (audit 2026-08-16 C1)', async () => {
+    const signer = await WalletSigner.generate();
+    const payload = new TextEncoder().encode('hello');
+    signer.network = 'testnet';
+    const testnetId = await signer.computeMsgId(payload, 12345);
+    signer.network = 'mainnet';
+    const mainnetId = await signer.computeMsgId(payload, 12345);
+    expect(testnetId).not.toEqual(mainnetId);
+  });
+
+  it('throws computing msg_id/signing an envelope before network is known', async () => {
+    const signer = await WalletSigner.generate();
+    const payload = new TextEncoder().encode('hello');
+    await expect(signer.computeMsgId(payload, 12345)).rejects.toThrow('network is unset');
+    await expect(
+      signer.signEnvelope(2, 0x01, new Uint8Array(32), 12345, payload),
+    ).rejects.toThrow('network is unset');
   });
 
   it('should sign envelopes (64-byte signature)', async () => {
     const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
     const msgId = new Uint8Array(32);
     const payload = new TextEncoder().encode('test');
-    const sig = await signer.signEnvelope(1, 0x01, msgId, Date.now(), payload);
+    const sig = await signer.signEnvelope(2, 0x01, msgId, Date.now(), payload);
     expect(sig).toHaveLength(64);
   });
 

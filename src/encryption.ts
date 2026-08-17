@@ -12,7 +12,7 @@
 import { getPublicKey as x25519GetPublicKey, randomPrivateKey as x25519Random } from './x25519';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { encode } from '@msgpack/msgpack';
-import { MessageType, MSG_TYPE_NAME } from './types';
+import { MessageType, MSG_TYPE_NAME, PROTOCOL_VERSION } from './types';
 
 // --- small helpers ---------------------------------------------------------
 
@@ -128,19 +128,30 @@ export function addressToPubkey(address: string): Uint8Array {
 
 // --- canonical claim strings (must match l2-node verify) -------------------
 
-/** Canonical claim the WALLET signs to bind a device encryption key (§2.4). */
+/**
+ * Canonical claim the WALLET signs to bind a device encryption key (§2.4).
+ * `network` binds the claim to a single Klever network (audit 2026-08-16 C1
+ * follow-up — this signature is the sole authority and never covers a
+ * msg_id, so it needs its own network binding).
+ */
 export function encBindClaim(
   encPubHex: string,
   deviceIdHex: string,
   wallet: string,
   timestamp: number,
+  network: string,
 ): string {
-  return `ogmara-enc-bind:${encPubHex.toLowerCase()}:${deviceIdHex.toLowerCase()}:${wallet}:${timestamp}`;
+  return `ogmara-enc-bind:${network}:${encPubHex.toLowerCase()}:${deviceIdHex.toLowerCase()}:${wallet}:${timestamp}`;
 }
 
-/** Canonical claim the WALLET signs to revoke a device encryption key (§2.4). */
-export function encRevokeClaim(encPubHex: string, wallet: string, timestamp: number): string {
-  return `ogmara-enc-revoke:${encPubHex.toLowerCase()}:${wallet}:${timestamp}`;
+/** Canonical claim the WALLET signs to revoke a device encryption key (§2.4). See {@link encBindClaim} for `network`. */
+export function encRevokeClaim(
+  encPubHex: string,
+  wallet: string,
+  timestamp: number,
+  network: string,
+): string {
+  return `ogmara-enc-revoke:${network}:${encPubHex.toLowerCase()}:${wallet}:${timestamp}`;
 }
 
 // --- wallet-authored envelope builders -------------------------------------
@@ -153,17 +164,28 @@ export function encRevokeClaim(encPubHex: string, wallet: string, timestamp: num
  */
 export type WalletSignFn = (claim: string) => Promise<string | Uint8Array>;
 
+/**
+ * Compute a message ID (protocol v2, audit 2026-08-16 C1):
+ * `Keccak-256(networkLen(1) + network + author_pubkey + payload + timestamp_bytes)`.
+ * Mirrors `WalletSigner.computeMsgId` (auth.ts) and `crypto::compute_msg_id`
+ * in the node — must never drift apart.
+ */
 function computeMsgIdForAuthor(
+  network: string,
   authorPubkey: Uint8Array,
   payload: Uint8Array,
   timestamp: number,
 ): Uint8Array {
+  const networkBytes = new TextEncoder().encode(network);
   const tsBytes = new Uint8Array(8);
   new DataView(tsBytes.buffer).setBigUint64(0, BigInt(timestamp));
-  const data = new Uint8Array(32 + payload.length + 8);
-  data.set(authorPubkey, 0);
-  data.set(payload, 32);
-  data.set(tsBytes, 32 + payload.length);
+  const data = new Uint8Array(1 + networkBytes.length + 32 + payload.length + 8);
+  let offset = 0;
+  data[offset++] = networkBytes.length;
+  data.set(networkBytes, offset); offset += networkBytes.length;
+  data.set(authorPubkey, offset); offset += 32;
+  data.set(payload, offset); offset += payload.length;
+  data.set(tsBytes, offset);
   return keccak_256(data);
 }
 
@@ -174,15 +196,21 @@ async function buildEncEnvelope(
   claim: string,
   walletSign: WalletSignFn,
   timestamp: number,
+  network: string,
 ): Promise<Uint8Array> {
   const payloadBytes = new Uint8Array(encode(payloadObj));
   // The envelope is WALLET-authored: author = wallet, msg_id is keyed to the
   // wallet's pubkey, and the signature is the wallet's Klever-message signature
   // over the canonical claim (the node re-derives and verifies it).
-  const msgId = computeMsgIdForAuthor(addressToPubkey(walletAddress), payloadBytes, timestamp);
+  const msgId = computeMsgIdForAuthor(
+    network,
+    addressToPubkey(walletAddress),
+    payloadBytes,
+    timestamp,
+  );
   const signature = normalizeWalletSig(await walletSign(claim));
   const envelope = {
-    version: 1,
+    version: PROTOCOL_VERSION,
     msg_type: MSG_TYPE_NAME[msgType],
     msg_id: msgId,
     author: walletAddress,
@@ -204,6 +232,13 @@ export interface DeviceEncBindingParams {
   deviceIdHex: string;
   /** Asks the wallet to `signMessage` the canonical claim. */
   walletSign: WalletSignFn;
+  /**
+   * Target node's Klever network ("testnet"/"mainnet"), e.g. from
+   * `OgmaraClient`'s cached `/health` response. Binds the envelope's msg_id
+   * to that network (audit 2026-08-16 C1) — required since this builder has
+   * no client/signer object to resolve it from.
+   */
+  network: string;
   /** Defaults to `Date.now()`. Must equal the envelope timestamp the node sees. */
   timestamp?: number;
 }
@@ -213,7 +248,7 @@ export async function buildDeviceEncBinding(p: DeviceEncBindingParams): Promise<
   const ts = p.timestamp ?? Date.now();
   const encPub = p.encPubHex.toLowerCase();
   const deviceId = p.deviceIdHex.toLowerCase();
-  const claim = encBindClaim(encPub, deviceId, p.walletAddress, ts);
+  const claim = encBindClaim(encPub, deviceId, p.walletAddress, ts, p.network);
   return buildEncEnvelope(
     MessageType.DeviceEncBinding,
     p.walletAddress,
@@ -221,6 +256,7 @@ export async function buildDeviceEncBinding(p: DeviceEncBindingParams): Promise<
     claim,
     p.walletSign,
     ts,
+    p.network,
   );
 }
 
@@ -228,6 +264,8 @@ export interface DeviceEncRevokeParams {
   walletAddress: string;
   encPubHex: string;
   walletSign: WalletSignFn;
+  /** See {@link DeviceEncBindingParams.network}. */
+  network: string;
   timestamp?: number;
 }
 
@@ -235,7 +273,7 @@ export interface DeviceEncRevokeParams {
 export async function buildDeviceEncRevoke(p: DeviceEncRevokeParams): Promise<Uint8Array> {
   const ts = p.timestamp ?? Date.now();
   const encPub = p.encPubHex.toLowerCase();
-  const claim = encRevokeClaim(encPub, p.walletAddress, ts);
+  const claim = encRevokeClaim(encPub, p.walletAddress, ts, p.network);
   return buildEncEnvelope(
     MessageType.DeviceEncRevoke,
     p.walletAddress,
@@ -243,5 +281,6 @@ export async function buildDeviceEncRevoke(p: DeviceEncRevokeParams): Promise<Ui
     claim,
     p.walletSign,
     ts,
+    p.network,
   );
 }

@@ -117,6 +117,7 @@ describe('buildDeviceEncBinding', () => {
       encPubHex: encKp.publicKeyHex,
       deviceIdHex: dev.publicKeyHex,
       walletSign: (claim) => wallet.signKleverMessage(utf8(claim)),
+      network: 'testnet',
       timestamp: ts,
     });
 
@@ -129,17 +130,24 @@ describe('buildDeviceEncBinding', () => {
     expect(payload.enc_pub).toBe(encKp.publicKeyHex.toLowerCase());
     expect(payload.device_id).toBe(dev.publicKeyHex.toLowerCase());
 
-    // msg_id = Keccak(walletPubkey || payload || tsBE8) — exactly as the node.
+    // msg_id = Keccak(networkLen(1) || network || walletPubkey || payload || tsBE8)
+    // — exactly as the node (audit 2026-08-16 C1 network binding).
+    const network = new TextEncoder().encode('testnet');
     const tsBytes = new Uint8Array(8);
     new DataView(tsBytes.buffer).setBigUint64(0, BigInt(ts));
-    const idData = new Uint8Array(32 + (env.payload as Uint8Array).length + 8);
-    idData.set(addressToPubkey(wallet.signingAddress), 0);
-    idData.set(env.payload as Uint8Array, 32);
-    idData.set(tsBytes, 32 + (env.payload as Uint8Array).length);
+    const idData = new Uint8Array(
+      1 + network.length + 32 + (env.payload as Uint8Array).length + 8,
+    );
+    let off = 0;
+    idData[off++] = network.length;
+    idData.set(network, off); off += network.length;
+    idData.set(addressToPubkey(wallet.signingAddress), off); off += 32;
+    idData.set(env.payload as Uint8Array, off); off += (env.payload as Uint8Array).length;
+    idData.set(tsBytes, off);
     expect(toHex(env.msg_id as Uint8Array)).toBe(toHex(keccak_256(idData)));
 
     // The wallet signature verifies over the re-derived canonical claim.
-    const claim = encBindClaim(encKp.publicKeyHex, dev.publicKeyHex, wallet.signingAddress, ts);
+    const claim = encBindClaim(encKp.publicKeyHex, dev.publicKeyHex, wallet.signingAddress, ts, 'testnet');
     const ok = await ed.verifyAsync(
       env.signature as Uint8Array,
       kleverHash(claim),
@@ -150,7 +158,8 @@ describe('buildDeviceEncBinding', () => {
 
   // CROSS-IMPL VECTOR — these literals are asserted identically in sdk-rust's
   // encryption tests. Any byte-drift between the two SDKs (or vs the L2 node)
-  // breaks one of these suites. Wallet private key = bytes 0x01..0x20.
+  // breaks one of these suites. Wallet private key = bytes 0x01..0x20,
+  // network = "testnet" (audit 2026-08-16 C1 — msg_id is now network-bound).
   it('matches the fixed cross-impl vector (sdk-rust parity)', async () => {
     const walletPriv = new Uint8Array(32).map((_, i) => i + 1);
     const encPub = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -168,15 +177,16 @@ describe('buildDeviceEncBinding', () => {
         encPubHex: encPub,
         deviceIdHex: deviceId,
         walletSign: (c) => wallet.signKleverMessage(utf8(c)),
+        network: 'testnet',
         timestamp: ts,
       }),
     ) as Record<string, unknown>;
 
     expect(toHex(env.msg_id as Uint8Array)).toBe(
-      '5d9a8ae182c8b7712f4bcf164711fb7cda1107e300a417364fdbc86ed39fa91b',
+      '4c9a58d20d839495766428e144641a6d0a94213e7bc604d030d5c7053138e99e',
     );
     expect(toHex(env.signature as Uint8Array)).toBe(
-      '0fa1a8132831b3542f8392b2332e9de509c849e0cd7980b5dc63e51acfcc3de19e28f72b61cebcdc8b4a4c8c6477c21e4d1e27a30667388c92a7ff4081f1220c',
+      'cb6056cd0ad6b4fb1bcd29f104733f21ae5decb8d365a7dfb530671349a28006d92bdb2f82bbd20e5a236fc8d2c8ddcf073afc171c0fef80174ea29e74de470a',
     );
   });
 });

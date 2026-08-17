@@ -5,6 +5,86 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.44.0] - 2026-08-17
+
+### Added
+
+- **`buildDeletionRequest` + `OgmaraClient.deleteMessageRequest()` /
+  `deleteAllContentRequest()`** (l2-node final pre-mainnet audit W23,
+  right-to-erasure, spec 08-compliance §3.5). First SDK-level way to build
+  a `DeletionRequest` (0x50) envelope — previously no client had any path to
+  construct one. `deleteType` must be the Rust variant NAME string
+  (`'SingleMessage'` / `'AllUserContent'`), not a number — rmp-serde's
+  decoder accepts a plain integer too, but as the 0-based declaration-order
+  index, which does NOT match `DeletionType`'s explicit discriminants;
+  sending the wrong encoding would silently delete the wrong thing. Verified
+  against the node's actual decoder (new test in `dm.test.ts`, cross-checked
+  against a matching l2-node regression test).
+
+### Security
+
+- **Report/CounterVote now propagate network-wide** (l2-node 0.85.0, W22)
+  — no SDK change needed, `reportMessage()`/`counterVote()` already built
+  correct envelopes; the node just wasn't gossiping them.
+
+## [0.43.0] - 2026-08-17
+
+### Security
+
+- **DeviceRevocation never propagated (l2-node final pre-mainnet audit C3).**
+  `OgmaraClient.revokeDevice()` submitted a bare `DELETE
+  /api/v1/devices/{addr}` REST call — no signed envelope, so the target
+  node's revocation never gossiped to any other node. Fixed: it now builds
+  and signs a `DeviceRevocation` envelope (new `buildDeviceRevocation` in
+  `envelope.ts`) and submits it via `POST /api/v1/messages` — the node
+  (l2-node 0.84.0) now gossips this network-wide, matching the free/
+  gossiped `DeviceDelegation` registration flow. `revokeDevice`'s external
+  signature/return type is unchanged (`RevokeDeviceResponse { ok,
+  device_address }`), so this is a drop-in fix — no caller changes needed.
+  Removed the now-unused `deleteAuthenticated` private helper.
+
+## [0.42.0] - 2026-08-17
+
+### Security
+
+- **Cross-network envelope replay (l2-node final pre-mainnet audit C1) —
+  coordinated wire-format cutover.** `WalletSigner.computeMsgId` /
+  `signEnvelope` now fold the target Klever `network` ("testnet"/"mainnet")
+  into the msg_id and signing preimage, matching l2-node 0.83.0's
+  `PROTOCOL_VERSION` 1 → 2 hard cutover. `WalletSigner.network` is resolved
+  lazily via a new `networkProvider` callback that `OgmaraClient.withSigner`
+  wires to the client's cached `/health` binding — no caller-visible change
+  for anyone going through `OgmaraClient`. `computeMsgId`/`signEnvelope` are
+  now `async` (they may need to fetch `/health` on first use) and throw if
+  called with no network resolvable (fail closed rather than sign an
+  unbound, cross-network-replayable envelope). `buildEnvelope` now stamps
+  `PROTOCOL_VERSION` (2, exported from `types.ts`) instead of a hardcoded
+  `1`. `buildDeviceEncBinding`/`buildDeviceEncRevoke` (`encryption.ts`) gain
+  a new **required** `network` parameter — these build wallet-authored
+  envelopes outside the `OgmaraClient`/`WalletSigner` path, so callers must
+  supply it explicitly (e.g. from the client's `/health` binding). New
+  `OgmaraClient.getNetwork()` exposes that cached binding for exactly this.
+- **Breaking:** this is a hard wire-format cutover paired with l2-node
+  0.83.0 — envelopes built by this version are rejected by any l2-node
+  older than 0.83.0, and vice versa. Ships together with matching bumps in
+  `sdk-rust`, `web`, `desktop`, and `mobile`.
+- **Same finding, second signing scheme (post-fix internal audit).** The
+  envelope fix above doesn't cover `DeviceDelegation`/`DeviceEncBinding`/
+  `DeviceEncRevoke` — these sign a fixed **claim string**, never a msg_id,
+  so folding `network` into `computeMsgId` gave them no real protection
+  (msg_id is a public hash, not a MAC — an attacker can recompute it for a
+  different network and the claim signature still verifies unchanged).
+  Fixed by folding `network` into `buildDeviceClaim` (`auth.ts`,
+  `OgmaraClient.registerDevice` also updated to match) and
+  `encBindClaim`/`encRevokeClaim` (`encryption.ts`) — both now take a
+  required `network` parameter.
+
+### Fixed
+
+- `npm audit`: bumped a transitive `nanoid` (via `tsup` → `postcss`,
+  build-tooling only, not shipped) past a high-severity infinite-loop
+  advisory (GHSA-2v37-7h3g-55p8) via `npm audit fix`.
+
 ## [0.41.0] - 2026-07-27
 
 ### Added

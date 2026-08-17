@@ -383,6 +383,17 @@ export interface ClientConfig {
   timeout?: number;
 }
 
+/**
+ * Current Ogmara envelope protocol version (spec 3.1).
+ *
+ * Bumped 1 -> 2 for the audit 2026-08-16 C1 fix: signed envelope preimages
+ * now fold in the target network_id (see `WalletSigner.signEnvelope`/
+ * `computeMsgId` in `auth.ts`). Mirrors `PROTOCOL_VERSION` in the node
+ * (l2-node `messages/envelope.rs`) — must never drift apart; the node
+ * hard-rejects any other version.
+ */
+export const PROTOCOL_VERSION = 2;
+
 /** Message type identifiers (protocol spec 3.2). */
 export const MessageType = {
   ChatMessage: 0x01,

@@ -5,6 +5,24 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.46.0] - 2026-08-18
+
+### Added
+
+- **`buildDmSyncAuthClaim` + automatic `WalletSigner` attachment** (l2-node
+  final pre-mainnet audit W5). l2-node 0.94.0 now requires a wallet-signed
+  authorization claim before it will backfill a wallet's missed DMs to a
+  requesting node — closing a gap where any freshly-generated node identity
+  could pull any wallet's entire DM history. `WalletSigner.signRequest` now
+  transparently signs (and caches, per target node) this claim and attaches
+  it as two new optional auth headers whenever the signer holds the wallet
+  key directly. Delegated-device signers (`walletAddress` set) omit it —
+  v1 is wallet-direct only, no application code needs to change either way.
+  The cache re-signs after 4 minutes (server freshness window is 5) rather
+  than caching indefinitely — an early review pass caught that an
+  unbounded cache would silently and permanently break backfill for any
+  long-lived signer once its one claim aged past the server's window.
+
 ## [0.45.0] - 2026-08-17
 
 ### Added

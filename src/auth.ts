@@ -22,6 +22,13 @@ export interface AuthHeaders {
   'x-ogmara-address': string;
   'x-ogmara-timestamp': string;
   'x-ogmara-nonce': string;
+  /**
+   * W5 dm-sync backfill authorization — present only when this signer holds
+   * the wallet key directly (not a delegated device key; see
+   * `buildDmSyncAuthClaim`).
+   */
+  'x-ogmara-dmsync-auth-timestamp'?: string;
+  'x-ogmara-dmsync-auth'?: string;
 }
 
 /**
@@ -184,12 +191,13 @@ export class WalletSigner {
       `ogmara-auth:${binding.network}:${binding.nodeId}:${nonce}:${timestamp}:${method}:${pathOnly}`;
     const signature = await this.signKleverMessage(new TextEncoder().encode(authString));
 
-    return {
+    const base: AuthHeaders = {
       'x-ogmara-auth': btoa(String.fromCharCode(...signature)),
       'x-ogmara-address': this.signingAddress,
       'x-ogmara-timestamp': timestamp.toString(),
       'x-ogmara-nonce': nonce,
     };
+    return { ...base, ...(await this.getDmSyncClaimHeaders(binding)) };
   }
 
   /**
@@ -304,6 +312,46 @@ export class WalletSigner {
     data.set(tsBytes, offset);
     return keccak_256(data);
   }
+
+  /**
+   * Cached dm-sync backfill authorization claims (audit W5), keyed
+   * `${network}:${nodeId}` so a signer reused against a different target
+   * node re-signs per-node rather than replaying a claim bound to a stale
+   * one.
+   */
+  private dmSyncClaims = new Map<string, { timestamp: number; signature: string }>();
+
+  /**
+   * How long a cached claim is reused before re-signing (audit W5 code
+   * review follow-up). MUST stay comfortably under the server's
+   * `WALLET_AUTH_MAX_AGE_SECS` (300s, l2-node `dm_sync.rs`) — caching
+   * indefinitely (the original v1 behavior) meant a long-lived signer
+   * silently and permanently lost dm-sync backfill the moment its one
+   * cached claim aged past the server's window, with no error surfaced
+   * anywhere. 4 minutes leaves a minute of margin for clock skew/latency.
+   */
+  private static readonly DM_SYNC_CLAIM_TTL_MS = 4 * 60 * 1000;
+
+  /**
+   * Build (and cache) the W5 dm-sync authorization headers for `binding`.
+   * Returns `{}` for a delegated-device signer (`walletAddress` set) — v1
+   * is wallet-direct only, see `buildDmSyncAuthClaim`.
+   */
+  private async getDmSyncClaimHeaders(binding: NodeBinding): Promise<Partial<AuthHeaders>> {
+    if (this.walletAddress) return {};
+    const key = `${binding.network}:${binding.nodeId}`;
+    let cached = this.dmSyncClaims.get(key);
+    if (!cached || Date.now() - cached.timestamp > WalletSigner.DM_SYNC_CLAIM_TTL_MS) {
+      const { claimString, timestamp } = buildDmSyncAuthClaim(binding.nodeId, this.address, binding.network);
+      const sig = await this.signKleverMessage(new TextEncoder().encode(claimString));
+      cached = { timestamp, signature: btoa(String.fromCharCode(...sig)) };
+      this.dmSyncClaims.set(key, cached);
+    }
+    return {
+      'x-ogmara-dmsync-auth-timestamp': cached.timestamp.toString(),
+      'x-ogmara-dmsync-auth': cached.signature,
+    };
+  }
 }
 
 /**
@@ -336,6 +384,40 @@ export function buildDeviceClaim(
   const ts = timestamp ?? Date.now();
   return {
     claimString: `ogmara-device-claim:${network}:${devicePubkeyHex.toLowerCase()}:${walletAddress}:${ts}`,
+    timestamp: ts,
+  };
+}
+
+/**
+ * Build a dm-sync wallet-authorization claim string (audit W5): proves the
+ * WALLET at `wallet` authorized `nodeId` SPECIFICALLY to backfill its DM
+ * history on its behalf. Wallet-direct only (v1) — no device-delegation
+ * support, so a device-key `WalletSigner` (one with `walletAddress` set)
+ * never produces this claim (`WalletSigner.signRequest` silently omits the
+ * two dm-sync headers for such a signer rather than sign with the wrong
+ * key).
+ *
+ * `nodeId` is the SAME value already fetched via `GET /api/v1/health` for
+ * the existing host-bound REST/WS auth (`NodeBinding.nodeId`) — no new
+ * node-identity discovery needed.
+ *
+ * Mirrors `dm_sync::build_wallet_auth_claim` (l2-node) and
+ * `build_dm_sync_auth_claim` (sdk-rust) — the three must never drift apart.
+ *
+ * @param nodeId - Target node's Ogmara `node_id` (from `NodeBinding`)
+ * @param wallet - Wallet's klv1... address
+ * @param network - Target node's Klever network ("testnet"/"mainnet")
+ * @param timestamp - Unix timestamp in milliseconds (defaults to Date.now())
+ */
+export function buildDmSyncAuthClaim(
+  nodeId: string,
+  wallet: string,
+  network: string,
+  timestamp?: number,
+): { claimString: string; timestamp: number } {
+  const ts = timestamp ?? Date.now();
+  return {
+    claimString: `ogmara-dm-sync-auth:${network}:${nodeId}:${wallet}:${ts}`,
     timestamp: ts,
   };
 }

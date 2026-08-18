@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { WalletSigner } from './auth';
+import { WalletSigner, buildDmSyncAuthClaim } from './auth';
 
 const KLEVER_PREFIX = new TextEncoder().encode('\x17Klever Signed Message:\n');
 function kleverHash(msg: Uint8Array): Uint8Array {
@@ -66,6 +66,70 @@ describe('WalletSigner', () => {
     const a = await signer.signRequest('GET', '/api/v1/health', binding);
     const b = await signer.signRequest('GET', '/api/v1/health', binding);
     expect(a['x-ogmara-nonce']).not.toEqual(b['x-ogmara-nonce']);
+  });
+
+  it('buildDmSyncAuthClaim produces the ogmara-dm-sync-auth domain string (audit W5)', () => {
+    const { claimString, timestamp } = buildDmSyncAuthClaim('node-abc', 'klv1wallet', 'testnet', 12345);
+    expect(claimString).toBe('ogmara-dm-sync-auth:testnet:node-abc:klv1wallet:12345');
+    expect(timestamp).toBe(12345);
+  });
+
+  it('a wallet-direct signer attaches a valid dm-sync claim to auth headers (audit W5)', async () => {
+    const signer = await WalletSigner.generate();
+    const binding = { network: 'testnet', nodeId: 'node-abc' };
+    const headers = await signer.signRequest('GET', '/api/v1/health', binding);
+
+    expect(headers['x-ogmara-dmsync-auth-timestamp']).toBeTruthy();
+    expect(headers['x-ogmara-dmsync-auth']).toBeTruthy();
+
+    const claimTs = parseInt(headers['x-ogmara-dmsync-auth-timestamp']!);
+    const { claimString } = buildDmSyncAuthClaim('node-abc', signer.address, 'testnet', claimTs);
+    const sig = Uint8Array.from(atob(headers['x-ogmara-dmsync-auth']!), (c) => c.charCodeAt(0));
+    const ok = await ed.verifyAsync(sig, kleverHash(new TextEncoder().encode(claimString)), hexToU8(signer.publicKeyHex));
+    expect(ok).toBe(true);
+  });
+
+  it('a delegated-device signer omits dm-sync claim headers (audit W5, v1 scope)', async () => {
+    const signer = await WalletSigner.generate();
+    signer.walletAddress = 'klv1someotherwallet';
+    const headers = await signer.signRequest('GET', '/api/v1/health', { network: 'testnet', nodeId: 'node-abc' });
+    expect(headers['x-ogmara-dmsync-auth-timestamp']).toBeUndefined();
+    expect(headers['x-ogmara-dmsync-auth']).toBeUndefined();
+  });
+
+  it('caches the dm-sync claim per (network, nodeId) rather than re-signing every request', async () => {
+    const signer = await WalletSigner.generate();
+    const binding = { network: 'testnet', nodeId: 'node-abc' };
+    const a = await signer.signRequest('GET', '/api/v1/health', binding);
+    const b = await signer.signRequest('GET', '/api/v1/messages', binding);
+    expect(a['x-ogmara-dmsync-auth']).toEqual(b['x-ogmara-dmsync-auth']);
+    expect(a['x-ogmara-dmsync-auth-timestamp']).toEqual(b['x-ogmara-dmsync-auth-timestamp']);
+
+    // A different target node gets its own claim (bound to that node_id).
+    const c = await signer.signRequest('GET', '/api/v1/health', { network: 'testnet', nodeId: 'node-xyz' });
+    expect(c['x-ogmara-dmsync-auth']).not.toEqual(a['x-ogmara-dmsync-auth']);
+  });
+
+  it('re-signs a cached dm-sync claim once it goes stale (audit W5 code review follow-up)', async () => {
+    // Regression: caching the claim forever meant a long-lived signer
+    // silently and permanently lost dm-sync backfill the moment its one
+    // cached claim aged past the server's freshness window (300s).
+    vi.useFakeTimers();
+    try {
+      const signer = await WalletSigner.generate();
+      const binding = { network: 'testnet', nodeId: 'node-abc' };
+      const a = await signer.signRequest('GET', '/api/v1/health', binding);
+
+      vi.advanceTimersByTime(3 * 60 * 1000); // 3 min — still within TTL
+      const b = await signer.signRequest('GET', '/api/v1/health', binding);
+      expect(b['x-ogmara-dmsync-auth']).toEqual(a['x-ogmara-dmsync-auth']);
+
+      vi.advanceTimersByTime(2 * 60 * 1000); // +2 min = 5 min total — past TTL
+      const c = await signer.signRequest('GET', '/api/v1/health', binding);
+      expect(c['x-ogmara-dmsync-auth-timestamp']).not.toEqual(a['x-ogmara-dmsync-auth-timestamp']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should compute deterministic msg_id', async () => {

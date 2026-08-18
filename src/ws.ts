@@ -239,6 +239,14 @@ export class WsSubscription {
               timestamp: parseInt(headers['x-ogmara-timestamp']),
               signature: headers['x-ogmara-auth'],
               nonce: headers['x-ogmara-nonce'],
+              // W5 dm-sync backfill authorization, when this signer holds
+              // the wallet key directly (absent for delegated-device signers).
+              ...(headers['x-ogmara-dmsync-auth-timestamp'] && headers['x-ogmara-dmsync-auth']
+                ? {
+                    dm_sync_timestamp: parseInt(headers['x-ogmara-dmsync-auth-timestamp']),
+                    dm_sync_signature: headers['x-ogmara-dmsync-auth'],
+                  }
+                : {}),
             });
           } catch (err) {
             // Surface WHY auth failed instead of silently looping (this was the

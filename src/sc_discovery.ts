@@ -91,7 +91,8 @@ const MAX_MULTIADDR_LEN = 512;
 
 // ── Hex / bytes / base64 helpers ──────────────────────────────────────
 
-function bytesToHex(bytes: Uint8Array): string {
+/** Exported for reuse by `sc_queries.ts`. */
+export function bytesToHex(bytes: Uint8Array): string {
   let out = '';
   for (let i = 0; i < bytes.length; i++) {
     const b = bytes[i] & 0xff;
@@ -109,7 +110,8 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-function bytesToUtf8(bytes: Uint8Array): string {
+/** Exported for reuse by `sc_queries.ts`. */
+export function bytesToUtf8(bytes: Uint8Array): string {
   try {
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
   } catch {
@@ -119,16 +121,18 @@ function bytesToUtf8(bytes: Uint8Array): string {
   }
 }
 
-/** Mirrors `encode_u64_minimal_hex`: minimal big-endian, even-length hex. */
-function u64MinimalHex(v: number): string {
+/** Mirrors `encode_u64_minimal_hex`: minimal big-endian, even-length hex.
+ *  Exported for reuse by `sc_queries.ts`. */
+export function u64MinimalHex(v: number): string {
   if (v === 0) return '00';
   let hex = v.toString(16);
   if (hex.length % 2 !== 0) hex = '0' + hex;
   return hex;
 }
 
-/** Decode minimal-BE bytes → number (caps at 2^53; fine for u64 ts/counts). */
-function decodeU64Be(bytes: Uint8Array): number {
+/** Decode minimal-BE bytes → number (caps at 2^53; fine for u64 ts/counts).
+ *  Exported for reuse by `sc_queries.ts`. */
+export function decodeU64Be(bytes: Uint8Array): number {
   if (!bytes || bytes.length === 0) return 0;
   if (bytes.length > 8) return 0;
   let n = 0;
@@ -321,11 +325,17 @@ function derivePeerId(multiaddrs: string[]): string | null {
 
 // ── VM query ──────────────────────────────────────────────────────────
 
-class ScRequireError extends Error {
+/** Thrown when the SC's `require!` rejects a view call (e.g. "not found").
+ *  Exported so other SC-view modules (`sc_queries.ts`) can share this vmQuery
+ *  implementation instead of duplicating the /vm/query request shape. */
+export class ScRequireError extends Error {
   scRequireFailure = true;
 }
 
-async function vmQuery(
+/** Low-level `/vm/query` RPC call, shared by `sc_discovery.ts` (node
+ *  bootstrap) and `sc_queries.ts` (general-purpose on-chain reads). Exported
+ *  so both stay byte-identical in request/response handling. */
+export async function vmQuery(
   rpc: string,
   sc: string,
   funcName: string,
@@ -474,4 +484,30 @@ export async function discoverNodeUrlsViaSc(
     }
   }
   return urls;
+}
+
+/**
+ * Number of registered nodes that are NOT paused (SC 0.5.0+
+ * `getActiveNodeCount`). This — not a raw `getActiveNodes` page count — is
+ * the real denominator behind the on-chain hybrid-quorum escalation
+ * threshold (`max(4, active/2 + 1)`, spec 12 §2.8): a paused node cannot
+ * anchor, so it doesn't count toward how many agreeing anchorers a
+ * contested height needs. Returns `0` on a `require!` failure (empty SC
+ * state); transport/decoding failures reject.
+ */
+export async function getActiveNodeCount(
+  network: ScNetwork,
+  opts: Pick<ScDiscoveryOptions, 'timeoutMs'> = {},
+): Promise<number> {
+  const net = SC_NETWORKS[network];
+  if (!net) throw new Error('unknown network: ' + network);
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(net.rpc, net.sc, 'getActiveNodeCount', [], timeoutMs);
+  } catch (e) {
+    if (e instanceof ScRequireError) return 0;
+    throw e;
+  }
+  return items.length > 0 ? decodeU64Be(items[0]) : 0;
 }

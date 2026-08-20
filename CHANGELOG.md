@@ -5,6 +5,57 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.47.0] - 2026-08-20
+
+Surfaces the ogmara-contract 0.5.0–0.7.0 view surface (hybrid-quorum
+follow-up) for SDK consumers who query the chain directly.
+
+### Added
+
+- `getActiveNodeCount(network, opts?)` — number of registered nodes that
+  are NOT paused (SC 0.5.0+ `getActiveNodeCount`). The real denominator
+  behind the on-chain hybrid-quorum escalation threshold; a paused node
+  doesn't count. Exported from `sc_discovery.ts` alongside the existing
+  node-bootstrap functions.
+- New `sc_queries.ts` module — general-purpose on-chain reads distinct
+  from `sc_discovery.ts`'s node-bootstrap scope:
+  - `getUserRegisteredAt(network, klvAddress, opts?)` — a user's
+    registration timestamp, or `0` if unregistered. Validates the decoded
+    address is exactly 32 bytes before calling the chain — `addressToPubkey`
+    (`encryption.ts`) decodes bech32 characters but doesn't itself verify
+    the checksum or enforce a 32-byte result, so a malformed-but-valid-charset
+    address would otherwise silently send the wrong number of bytes on-chain
+    and come back ambiguously as "not registered."
+  - `getChannelInfo(network, channelId, opts?)` — a channel's on-chain
+    type + creation timestamp, or `null` if it doesn't exist.
+  - `getEscalatedCanonical(network, blockHeight, opts?)` — raw read of a
+    contested anchor height's MATERIALIZED resolution (SC 0.7.0), or
+    `null` if not yet finalized. Distinct from a general
+    `getCanonicalAnchor` read (not exposed here): for an escalated
+    height, that view can return the §2.9 tiebreak's PROVISIONAL preview
+    well before the 24h grace window closes, and that preview can still
+    be overridden by real escalated-quorum agreement on a different
+    root. This function never computes or returns the preview, and
+    validates the decoded payload is genuinely 64 hex characters (not
+    just 64 bytes) before returning it.
+  - `channelId` and `blockHeight` are validated as non-negative integers
+    before any network call (a negative/fractional/NaN value would
+    otherwise silently encode to malformed hex and surface only as an
+    opaque RPC failure).
+  
+  These are on-chain source-of-truth reads, not the primary data path
+  for most apps — a client talking to an Ogmara L2 node should keep
+  using the node's own REST API for channel/user data (faster, no
+  Klever RPC round-trip). Use these for verification/reconciliation
+  tooling or SDK consumers with no L2 node to talk to.
+- `sc_discovery.ts` now exports its internal `vmQuery` RPC helper and
+  encoding utilities (`u64MinimalHex`, `decodeU64Be`, `bytesToHex`,
+  `bytesToUtf8`, `ScRequireError`) so `sc_queries.ts` shares a single
+  request/response implementation instead of duplicating it.
+- 18 new tests (105 total, all passing) covering the new query functions,
+  `getActiveNodeCount`, the malformed-address guard, integer-argument
+  validation, and hex-charset validation.
+
 ## [0.46.0] - 2026-08-18
 
 ### Added

@@ -132,6 +132,7 @@ export type { TextSegment, NodeWithPing } from './utils';
 export {
   discoverNodesViaSc,
   discoverNodeUrlsViaSc,
+  getActiveNodeCount,
   SC_NETWORKS,
 } from './sc_discovery';
 export type {
@@ -140,3 +141,9 @@ export type {
   ScDiscoveredNode,
   ScDiscoveryOptions,
 } from './sc_discovery';
+export {
+  getUserRegisteredAt,
+  getChannelInfo,
+  getEscalatedCanonical,
+} from './sc_queries';
+export type { ScQueryOptions, ScChannelInfo } from './sc_queries';

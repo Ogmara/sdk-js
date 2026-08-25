@@ -458,6 +458,44 @@ export const MSG_TYPE_NAME: Record<number, string> = Object.fromEntries(
   Object.entries(MessageType).map(([name, value]) => [value, name]),
 );
 
+/**
+ * The global-news message types, as numeric `msg_type` values.
+ *
+ * DERIVED from {@link MessageType} so a new news type can't be forgotten here.
+ */
+export const NEWS_MSG_TYPES: ReadonlySet<number> = new Set([
+  MessageType.NewsPost,
+  MessageType.NewsEdit,
+  MessageType.NewsDelete,
+  MessageType.NewsComment,
+  MessageType.NewsReaction,
+  MessageType.NewsRepost,
+]);
+
+/**
+ * Whether a WS/REST envelope belongs to the global news feed.
+ *
+ * Accepts BOTH representations of `msg_type`, which is the whole reason this
+ * helper exists: the signed wire envelope carries the numeric discriminant, but
+ * the node's enriched read/WS JSON serializes the Rust enum by variant NAME, so
+ * the same logical field arrives as `0x20` in one place and `"NewsPost"` in
+ * another. {@link Envelope} types it as `number`, which is only half true —
+ * comparing it against a number alone silently never matches a WS frame.
+ *
+ * Use this rather than hand-rolling the check per client; getting it wrong fails
+ * closed and silently (the live update just never fires).
+ */
+export function isNewsEnvelope(envelope: unknown): boolean {
+  if (!envelope || typeof envelope !== 'object') return false;
+  const t = (envelope as { msg_type?: unknown }).msg_type;
+  if (typeof t === 'number') return NEWS_MSG_TYPES.has(t);
+  if (typeof t === 'string') {
+    const code = (MessageType as Record<string, number>)[t];
+    return typeof code === 'number' && NEWS_MSG_TYPES.has(code);
+  }
+  return false;
+}
+
 /** Follow payload. */
 export interface FollowPayload {
   target: string;

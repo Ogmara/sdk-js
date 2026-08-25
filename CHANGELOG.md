@@ -5,6 +5,27 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.0] - 2026-08-25
+
+### Added
+
+- **`isNewsEnvelope(envelope)` and `NEWS_MSG_TYPES`** — shared detection of
+  global-news envelopes, used by web, desktop and mobile to drive live feed
+  updates (l2-node 0.119.0 starts broadcasting news over the WebSocket).
+
+  This exists as one helper rather than three per-client checks because
+  `msg_type` reaches clients in two different shapes: the signed wire envelope
+  carries the numeric discriminant, while the node's enriched read/WS JSON
+  serializes the Rust enum by variant NAME. So the same logical field arrives as
+  `0x20` in one place and `"NewsPost"` in another. `Envelope` types it as
+  `number`, which is only half true — comparing against a number alone silently
+  never matches a WS frame, and the failure mode is a live update that simply
+  never fires. `isNewsEnvelope` accepts both forms and rejects malformed input
+  without throwing.
+
+  `NEWS_MSG_TYPES` is derived from `MessageType`, so a new news type cannot be
+  forgotten here.
+
 ## [0.47.0] - 2026-08-20
 
 Surfaces the ogmara-contract 0.5.0–0.7.0 view surface (hybrid-quorum

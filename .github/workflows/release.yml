@@ -1,0 +1,81 @@
+name: Release
+
+# Publishes @ogmara/sdk to npm when a v* tag is pushed.
+#
+# Authentication uses npm **trusted publishing** (OIDC) — there is no NPM_TOKEN
+# secret in this repo. npm mints a short-lived, workflow-scoped token at publish
+# time, so there is no long-lived credential that can leak or be reused.
+#
+# One-time setup required before the first tagged release works:
+#   1. Publish @ogmara/sdk manually once (npm's trusted-publisher settings only
+#      exist on a package that already exists).
+#   2. On npmjs.com → package → Settings → Trusted Publisher, add:
+#        Organization/user: Ogmara     Repository: sdk-js
+#        Workflow filename: release.yml
+#   3. Push tags thereafter — this workflow does the rest.
+#
+# See docs/planning/ogmara-newsbot-plan.md §11 in the planning hub for context.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm >= 11.5.1; the npm bundled with Node 22 is
+      # older than that, so upgrade explicitly rather than relying on the image.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install
+        run: npm ci
+
+      # Guard against a tag that disagrees with package.json — publishing
+      # v0.49.0 from a tree that says 0.48.0 would silently ship the wrong
+      # version and burn the number (npm publishes are immutable).
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version $TAG_VERSION but package.json says $PKG_VERSION"
+            exit 1
+          fi
+          echo "Publishing version $PKG_VERSION"
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Audit
+        run: npm audit --audit-level=low
+
+      - name: Build
+        run: npm run build
+
+      # --provenance is passed here rather than set in package.json's
+      # publishConfig, so that a local manual publish (which has no OIDC
+      # token available) still works.
+      - name: Publish to npm
+        run: npm publish --provenance --access public

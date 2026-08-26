@@ -5,6 +5,43 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.49.0] - 2026-08-26
+
+### Added
+
+- **npm publishing.** The package is now distributable — previously it could
+  only be consumed via a `file:` link from a sibling checkout.
+  - `prepare` script, so `npm install github:Ogmara/sdk-js#v0.49.0` builds on
+    install. Without it the package was **broken for every external consumer**:
+    `files` ships only `dist`, `dist/` is gitignored, and `prepublishOnly` does
+    not run for git dependencies — so a git install resolved to a package with
+    no build output and every import failed.
+  - `publishConfig.access = public` — scoped packages default to restricted and
+    the publish would otherwise fail.
+  - `LICENSE` and `README.md` added to `files` so they ship in the tarball.
+- **`exports` map** with `types`/`import`/`require` conditions, plus
+  `./package.json`. Fixes type and module resolution for consumers on
+  `moduleResolution: node16`/`bundler`. Deep imports into `dist/` are no longer
+  possible; nothing imported them (verified across `web`, `desktop`, `mobile`,
+  all of which use the bare specifier only).
+- **`engines.node = ">=20"`** — advisory floor for consumers.
+- **LICENSE file (MIT).** `package.json` declared `"license": "MIT"` but no
+  licence text existed in the repo, so the published package would have shipped
+  a bare SPDX string with no terms.
+- **CI workflow** (`.github/workflows/ci.yml`) — typecheck, tests, widget build
+  and `npm audit` on push and PR. The repo previously had no CI at all.
+- **Release workflow** (`.github/workflows/release.yml`) — publishes on a `v*`
+  tag using npm **trusted publishing** (OIDC), so no long-lived `NPM_TOKEN`
+  secret is stored in the repo, and releases carry build provenance linking the
+  tarball to its source commit. Includes a guard that fails the run when the tag
+  disagrees with `package.json` (npm publishes are immutable, so a mismatched
+  tag would permanently burn a version number).
+
+### Changed
+
+- Version bumped to 0.49.0. No API or wire-format changes — this release is
+  packaging and distribution only.
+
 ## [0.48.0] - 2026-08-25
 
 ### Added

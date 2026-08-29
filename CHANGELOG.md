@@ -5,6 +5,25 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.50.0] - 2026-08-28
+
+### Added
+
+- `Envelope` now declares the node's `NewsRepost`/`NewsComment` enrichment
+  fields, closing a gap flagged in an earlier newsbot session: consumers had
+  to cast through `unknown` to read data that already existed on the wire.
+  - `repost_count?: number`, `comment_count?: number` — populated by
+    `list_news`, `get_user_posts`, and `get_news_post`.
+  - `parent_post_id?`, `parent_author?`, `parent_title?` — `NewsComment`
+    "parent context" preview (`list_news` only).
+  - `original_id?`, `original_available?`, `original_author?`,
+    `original_title?`, `original_content?`, `original_deleted?`,
+    `original_attachment?`, `repost_comment?` — `NewsRepost` preview of the
+    reposted post, added alongside the l2-node 0.122.1 fix for reposts
+    rendering as empty cards.
+
+  Purely additive — every field is optional, no existing field changed.
+
 ## [0.49.0] - 2026-08-26
 
 ### Added

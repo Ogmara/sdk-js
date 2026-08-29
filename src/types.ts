@@ -103,10 +103,49 @@ export interface Envelope {
   reactions?: Record<string, number>;
   /** Aggregated news reactions: emoji → count. */
   reaction_counts?: Record<string, number>;
+  /** Number of reposts of this news post (news feed/detail/user-posts endpoints). */
+  repost_count?: number;
+  /** Number of comments on this news post (news feed/detail/user-posts endpoints). */
+  comment_count?: number;
   /** Tombstone marker — the referenced message was deleted. */
   deleted?: boolean;
   /** Edit marker — the message was edited. */
   edited?: boolean;
+
+  // --- NewsComment enrichment (list_news only) ---
+  /** hex msg_id of the post this comment targets. */
+  parent_post_id?: string;
+  /** Resolved wallet address of the parent post's author, if visible to the caller. */
+  parent_author?: string;
+  /** Parent post's title, if it has one and is visible to the caller. */
+  parent_title?: string;
+
+  // --- NewsRepost enrichment (list_news, get_news_post, get_user_posts) ---
+  /** hex msg_id of the reposted post (decoded from the repost's own payload). */
+  original_id?: string;
+  /** Optional quote-repost text carried in the repost's own payload. */
+  repost_comment?: string;
+  /**
+   * Whether the original post could be resolved and is visible to the
+   * caller. `false` means the original was deleted, unreadable, or not
+   * visible (e.g. a Followers-only post) — render a "post unavailable"
+   * fallback rather than an empty card in that case.
+   */
+  original_available?: boolean;
+  /** Resolved wallet address of the original post's author. */
+  original_author?: string;
+  /** Original post's title, if it has one. */
+  original_title?: string;
+  /** Original post's body content. */
+  original_content?: string;
+  /** Whether the original post has since been deleted. */
+  original_deleted?: boolean;
+  /** First attachment of the original post, for a quote-card thumbnail. */
+  original_attachment?: {
+    cid: string;
+    mime_type: string;
+    thumbnail_cid?: string;
+  };
 }
 
 /** Media attachment reference. */

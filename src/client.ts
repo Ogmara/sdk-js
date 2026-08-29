@@ -155,6 +155,70 @@ export function computeTrustScore(node: KnownNode): number {
   return Math.min(100, s);
 }
 
+/**
+ * Hard ceiling on any single HTTP response body this client reads, to bound
+ * memory use against a large (malicious, compromised, or merely buggy) node
+ * response. `resp.json()`/`resp.text()` called directly have no such cap and
+ * will buffer an arbitrarily large body — a slow drip within the request
+ * timeout, or a fast response on localhost/LAN, before ever returning
+ * control to caller code (audit 2026-08 finding 4). Generous: real
+ * responses are KB-sized; even a large media/post list stays well under 1 MB.
+ */
+export const MAX_RESPONSE_BYTES = 100 * 1024 * 1024; // 100 MB
+
+/**
+ * Read a `Response` body as text with the {@link MAX_RESPONSE_BYTES} cap.
+ *
+ * Rejects immediately on a `Content-Length` that already declares more than
+ * the cap. Where the runtime exposes a streaming `Response.body` (browser,
+ * Tauri — React Native's fetch does not always), reads incrementally and
+ * aborts as soon as the cap is crossed, so the cap holds even against a
+ * chunked response with no (or an understated) `Content-Length`. Falls back
+ * to a single bounded `resp.text()` read plus a post-hoc length check
+ * otherwise — still caught, just after one full read rather than mid-stream.
+ */
+export async function boundedText(resp: Response): Promise<string> {
+  const declaredLen = resp.headers.get('content-length');
+  if (declaredLen && Number(declaredLen) > MAX_RESPONSE_BYTES) {
+    throw new Error(`response too large (${declaredLen} bytes, limit ${MAX_RESPONSE_BYTES})`);
+  }
+  const body = resp.body as ReadableStream<Uint8Array> | null;
+  if (body && typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`response too large (exceeds ${MAX_RESPONSE_BYTES}-byte limit)`);
+      }
+      chunks.push(value);
+    }
+    const combined = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(combined);
+  }
+  const text = await resp.text();
+  if (text.length > MAX_RESPONSE_BYTES) {
+    throw new Error(`response too large (${text.length} bytes, limit ${MAX_RESPONSE_BYTES})`);
+  }
+  return text;
+}
+
+/** Parse a `Response` body as JSON, subject to the same {@link boundedText} cap. */
+export async function boundedJson(resp: Response): Promise<any> {
+  const text = await boundedText(resp);
+  return text ? JSON.parse(text) : undefined;
+}
+
 /** Ogmara SDK client for the L2 node REST API. */
 export class OgmaraClient {
   private nodeUrl: string;
@@ -725,10 +789,10 @@ export class OgmaraClient {
         signal: controller.signal,
       });
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -860,7 +924,7 @@ export class OgmaraClient {
         signal: controller.signal,
       });
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
     } finally {
@@ -882,7 +946,7 @@ export class OgmaraClient {
         signal: controller.signal,
       });
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
     } finally {
@@ -1319,7 +1383,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const body = await resp.json().catch(() => null);
+        const body = await boundedJson(resp).catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
           await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.getAuthenticated(path);
@@ -1327,10 +1391,10 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1358,7 +1422,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const body = await resp.json().catch(() => null);
+        const body = await boundedJson(resp).catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
           await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.get(path);
@@ -1366,10 +1430,10 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1390,10 +1454,10 @@ export class OgmaraClient {
     try {
       const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1426,7 +1490,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const body = await resp.json().catch(() => null);
+        const body = await boundedJson(resp).catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
           await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           // Retry the original request with fresh auth headers
@@ -1435,10 +1499,10 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1463,7 +1527,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const body = await resp.json().catch(() => null);
+        const body = await boundedJson(resp).catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
           await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.putEnvelope(path, envelopeBytes);
@@ -1471,7 +1535,7 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
     } finally {
@@ -1498,7 +1562,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const body = await resp.json().catch(() => null);
+        const body = await boundedJson(resp).catch(() => null);
         if (body?.error === 'pow_required' && body?.challenge) {
           await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
           return this.deleteEnvelope(path, envelopeBytes);
@@ -1506,7 +1570,7 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
     } finally {
@@ -1532,7 +1596,7 @@ export class OgmaraClient {
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
-        const respBody = await resp.json().catch(() => null);
+        const respBody = await boundedJson(resp).catch(() => null);
         if (respBody?.error === 'pow_required' && respBody?.challenge) {
           await this.ensurePowSolved(respBody.challenge as PowChallenge, respBody.address);
           return this.postJson(path, body);
@@ -1540,10 +1604,10 @@ export class OgmaraClient {
       }
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
+        const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
       }
-      return resp.json();
+      return boundedJson(resp);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -1598,11 +1662,11 @@ export class OgmaraClient {
     });
 
     if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
+      const text = await boundedText(resp).catch(() => '');
       throw new Error(`PoW verification failed (${resp.status}): ${text.slice(0, 200)}`);
     }
 
-    const body = await resp.json();
+    const body = await boundedJson(resp);
     if (!body.ok) {
       throw new Error(`PoW verification rejected: ${body.error ?? 'unknown'}`);
     }

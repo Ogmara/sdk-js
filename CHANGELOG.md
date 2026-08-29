@@ -5,6 +5,68 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.51.0] - 2026-08-29
+
+Closes the 3 remaining gaps from a dedicated newsbot-driven audit session
+(the 4th, `repost_count`/`comment_count`, already shipped in 0.50.0).
+
+### Security
+
+- **`addressToPubkey` now verifies the BIP-173 bech32 checksum and enforces
+  a 32-byte result**, instead of decoding bech32 characters positionally with
+  no validation. Previously, a single mistyped character in the data portion
+  of an address silently produced a *different, still-32-byte "valid-looking"
+  public key* instead of throwing — a caller passing an operator-typed
+  address (e.g. an admin-wallets config list) could accept a typo'd address
+  as if it were a different, valid one. `sc_queries.ts`'s `getUserRegisteredAt`
+  had a local re-check for the length half of this; it's now redundant and
+  removed, since the root cause is fixed at the source.
+  - **This is a breaking behavior change by semver**: a malformed address
+    that previously decoded (wrongly) now throws. Audited every call site in
+    this package (all three previously trusted their input; none change
+    behavior for well-formed addresses) — no other repo depends on this
+    export.
+
+### Fixed
+
+- **`Envelope.payload` and `Envelope.signature` were mistyped as base64
+  `string`; both are raw byte arrays** (`number[]`) on every REST and WS read
+  path. Verified against `l2-node/src/messages/envelope.rs`
+  (`pub payload: Vec<u8>`, `pub signature: Vec<u8>`) and `envelope_to_json`
+  (`l2-node/src/api/routes.rs`), which converts only `msg_id` to hex — neither
+  `payload` nor `signature` is ever base64-encoded. Every client already
+  worked around the wrong `payload` type independently (web/desktop's
+  `decodePayload(number[] | Uint8Array)`, mobile's `decodeChatMessage(payload:
+  unknown)`), which is strong evidence this was a real bug, not a
+  misunderstanding.
+  - Fixing the type surfaced a live bug it was masking: `web`/`desktop`'s
+    `ComposeView.tsx` called `atob(post.payload)` when loading a post for
+    edit, assuming `payload` really was base64 — since it's actually a
+    `number[]`, this either threw (silently swallowed) or decoded garbage,
+    so **editing an existing post never restored its tags or attachments**.
+    Fixed alongside this release (see `web`/`desktop` CHANGELOGs).
+  - `mobile`'s `envelopeNormalizer.ts` independently hex-encoded `signature`
+    locally, believing (per its own comment) that "the SDK's Envelope type
+    expects hex strings for msg_id and signature" — true of the old, wrong
+    type, not of the wire. Nothing reads `.signature` off a received envelope
+    anywhere in the app, so this was inert, but removed for the same reason.
+
+### Added
+
+- **A response-size ceiling on every `OgmaraClient` HTTP read.** The fetch
+  layer had a request *timeout* (`AbortController`, ~30s) but no cap on
+  response *body size* — `resp.json()`/`resp.text()` were called directly, so
+  a slow drip within the timeout window, or a fast response on localhost/LAN,
+  could buffer an arbitrarily large body in memory before any caller code
+  ever got control back. New `boundedText`/`boundedJson` helpers (100 MB
+  cap): reject immediately on an over-cap `Content-Length`, and where the
+  runtime exposes a streaming `Response.body` (browser, Tauri — not
+  guaranteed in React Native), abort mid-stream as soon as the cap is
+  crossed, so a chunked response with no (or an understated) `Content-Length`
+  is still bounded. Falls back to a single bounded read plus a post-hoc
+  length check where streaming isn't available. Applies to every endpoint,
+  not just the large-list ones (`getUserPosts` etc.) originally flagged.
+
 ## [0.50.0] - 2026-08-28
 
 ### Added

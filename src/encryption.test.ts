@@ -98,10 +98,76 @@ describe('device enc keypair', () => {
   });
 });
 
+// Independent bech32 encoder (BIP-173), used only to build fixture addresses
+// with a real, valid checksum — mirrors sc_discovery.ts's bech32EncodeKlv so
+// tests can construct wrong-length-but-checksum-valid addresses, which can't
+// be hand-typed.
+function bech32EncodeFixture(hrp: string, rawBytes: Uint8Array): string {
+  const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  const polymod = (values: number[]): number => {
+    let chk = 1;
+    for (const v of values) {
+      const top = chk >>> 25;
+      chk = ((chk & 0x1ffffff) << 5) ^ v;
+      for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GEN[i];
+    }
+    return chk >>> 0;
+  };
+  const hrpExpand = (h: string): number[] => {
+    const high = [...h].map((c) => c.charCodeAt(0) >>> 5);
+    const low = [...h].map((c) => c.charCodeAt(0) & 31);
+    return [...high, 0, ...low];
+  };
+  let acc = 0;
+  let bits = 0;
+  const data: number[] = [];
+  for (const b of rawBytes) {
+    acc = (acc << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      data.push((acc >>> bits) & 0x1f);
+    }
+  }
+  if (bits > 0) data.push((acc << (5 - bits)) & 0x1f);
+  const mod = polymod([...hrpExpand(hrp), ...data, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const checksum: number[] = [];
+  for (let i = 0; i < 6; i++) checksum.push((mod >>> (5 * (5 - i))) & 31);
+  return hrp + '1' + [...data, ...checksum].map((d) => CHARSET[d]).join('');
+}
+
 describe('addressToPubkey', () => {
   it('round-trips a generated wallet address to its pubkey', async () => {
     const signer = await WalletSigner.generate();
     expect(toHex(addressToPubkey(signer.signingAddress))).toBe(signer.publicKeyHex.toLowerCase());
+  });
+
+  it('rejects a single mistyped character (bad checksum) instead of decoding wrong data', async () => {
+    const signer = await WalletSigner.generate();
+    const addr = signer.signingAddress;
+    // Flip one data character (not the hrp/separator) to a different valid
+    // bech32 char, so it's still charset-valid but checksum-invalid.
+    const flipIdx = addr.indexOf('1') + 1;
+    const charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const current = charset.indexOf(addr[flipIdx]);
+    const replacement = charset[(current + 1) % charset.length];
+    const mutated = addr.slice(0, flipIdx) + replacement + addr.slice(flipIdx + 1);
+    expect(mutated).not.toBe(addr);
+    expect(() => addressToPubkey(mutated)).toThrow(/checksum/);
+  });
+
+  it('rejects a checksum-valid address that decodes to the wrong byte length', () => {
+    expect(() => addressToPubkey(bech32EncodeFixture('klv', new Uint8Array(31)))).toThrow(
+      /expected 32/,
+    );
+    expect(() => addressToPubkey(bech32EncodeFixture('klv', new Uint8Array(33)))).toThrow(
+      /expected 32/,
+    );
+  });
+
+  it('rejects a too-short string before indexing past the checksum', () => {
+    expect(() => addressToPubkey('klv1')).toThrow(/not a bech32 address/);
   });
 });
 

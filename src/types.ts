@@ -83,8 +83,16 @@ export interface Envelope {
   author: string;
   timestamp: number;
   lamport_ts: number;
-  payload: string; // base64 encoded
-  signature: string; // base64 encoded
+  // l2-node's Envelope declares `payload`/`signature` as `Vec<u8>`, which
+  // serde_json serializes as a JSON array of byte values, not a base64
+  // string — verified against `l2-node/src/messages/envelope.rs` and every
+  // REST/WS read path (routes.rs, notifications/engine.rs), none of which
+  // apply a base64 encoding. Every client (web/desktop's `decodePayload`,
+  // mobile's `decodeChatMessage`/`decodeNewsPost`) already treats these as
+  // byte arrays at runtime, working around the previously-wrong `string`
+  // declaration here.
+  payload: number[];
+  signature: number[];
   relay_path: string[];
 
   // --- Node-enriched read fields (audit 2026-06-07 B4.1) ---

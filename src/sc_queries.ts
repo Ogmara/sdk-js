@@ -73,18 +73,11 @@ export async function getUserRegisteredAt(
 ): Promise<number> {
   const { rpc, sc } = net(network);
   const timeoutMs = opts.timeoutMs ?? 8000;
-  // `addressToPubkey` decodes bech32 CHARACTERS but does not verify the
-  // checksum or enforce a 32-byte result — a malformed-but-charset-valid
-  // address (wrong length) silently decodes to the wrong number of bytes
-  // rather than throwing. Validate here so a caller mistake surfaces as a
-  // clear client-side error instead of sending a malformed address arg to
-  // the chain (which would otherwise come back ambiguously as "not
-  // registered" via a require! failure).
-  const pubkey = addressToPubkey(klvAddress);
-  if (pubkey.length !== 32) {
-    throw new Error(`invalid klv address: decoded to ${pubkey.length} bytes, expected 32`);
-  }
-  const addressHex = bytesToHex(pubkey);
+  // `addressToPubkey` itself verifies the bech32 checksum and the decoded
+  // length, so a malformed/mistyped address surfaces as a clear client-side
+  // error here rather than an ambiguous "not registered" require! failure
+  // from the chain.
+  const addressHex = bytesToHex(addressToPubkey(klvAddress));
   let items: Uint8Array[];
   try {
     items = await vmQuery(rpc, sc, 'getUserRegisteredAt', [addressHex], timeoutMs);

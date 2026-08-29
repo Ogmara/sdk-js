@@ -104,24 +104,70 @@ export function normalizeWalletSig(sig: string | Uint8Array): Uint8Array {
 // --- bech32 address → pubkey (for msg_id) ----------------------------------
 
 const BECH32_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const BECH32_GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
-/** Decode a bech32 address (`klv1…`/`ogd1…`) to its 32-byte Ed25519 public key. */
+/** BIP-173 checksum accumulator. */
+function bech32Polymod(values: readonly number[]): number {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) {
+      if ((top >>> i) & 1) chk ^= BECH32_GENERATOR[i];
+    }
+  }
+  return chk >>> 0;
+}
+
+/** Expand the human-readable part as the BIP-173 checksum requires. */
+function bech32HrpExpand(hrp: string): number[] {
+  const high: number[] = [];
+  const low: number[] = [];
+  for (let i = 0; i < hrp.length; i++) {
+    const c = hrp.charCodeAt(i);
+    high.push(c >>> 5);
+    low.push(c & 31);
+  }
+  return [...high, 0, ...low];
+}
+
+/**
+ * Decode a bech32 address (`klv1…`/`ogd1…`) to its 32-byte Ed25519 public key.
+ *
+ * Verifies the BIP-173 checksum and enforces a 32-byte result. Previously
+ * this decoded bech32 *characters* positionally without checking either —
+ * a single mistyped character in the data portion silently produced a
+ * different, still-32-byte "valid-looking" key instead of throwing (audit
+ * 2026-08). `sc_queries.ts` used to re-check the length half of this locally
+ * because the length wasn't guaranteed here; that workaround is now
+ * redundant since this throws on the same condition.
+ */
 export function addressToPubkey(address: string): Uint8Array {
   const sep = address.lastIndexOf('1');
-  if (sep < 1) throw new Error('not a bech32 address');
-  const data = address.slice(sep + 1, -6); // strip 6-char checksum
+  if (sep < 1 || sep + 7 > address.length) throw new Error('not a bech32 address');
+  const hrp = address.slice(0, sep);
+  const values: number[] = [];
+  for (const c of address.slice(sep + 1)) {
+    const v = BECH32_CHARSET.indexOf(c);
+    if (v === -1) throw new Error('invalid bech32 character');
+    values.push(v);
+  }
+  if (bech32Polymod([...bech32HrpExpand(hrp), ...values]) !== 1) {
+    throw new Error('invalid bech32 checksum');
+  }
   let bits = 0;
   let value = 0;
   const out: number[] = [];
-  for (const c of data) {
-    const v = BECH32_CHARSET.indexOf(c);
-    if (v === -1) throw new Error('invalid bech32 character');
+  for (const v of values.slice(0, -6)) { // strip 6-word checksum
     value = (value << 5) | v;
     bits += 5;
     if (bits >= 8) {
       bits -= 8;
       out.push((value >> bits) & 0xff);
     }
+  }
+  if (out.length !== 32) {
+    throw new Error(`invalid klv address: decoded to ${out.length} bytes, expected 32`);
   }
   return new Uint8Array(out);
 }

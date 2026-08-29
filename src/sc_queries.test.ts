@@ -62,16 +62,13 @@ describe('getUserRegisteredAt', () => {
   });
 
   it('rejects a malformed address instead of sending garbage bytes on-chain', async () => {
-    // No fetch stub: addressToPubkey's length check must throw BEFORE any
-    // network call is attempted (addressToPubkey itself doesn't validate
-    // length, only bech32 character set — this is the caller-side guard).
-    await expect(getUserRegisteredAt('testnet', 'klv1')).rejects.toThrow(/expected 32/);
+    // No fetch stub: addressToPubkey must throw BEFORE any network call is
+    // attempted — it now verifies the bech32 checksum and decoded length
+    // itself (see encryption.test.ts for dedicated checksum/length cases).
+    await expect(getUserRegisteredAt('testnet', 'klv1')).rejects.toThrow(/not a bech32 address/);
     await expect(
-      getUserRegisteredAt(
-        'testnet',
-        'klv1' + 'a'.repeat(80),
-      ),
-    ).rejects.toThrow(/expected 32/);
+      getUserRegisteredAt('testnet', 'klv1' + 'a'.repeat(80)),
+    ).rejects.toThrow(/checksum/);
   });
 });
 

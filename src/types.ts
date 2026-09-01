@@ -1030,6 +1030,16 @@ export interface SettingsSyncData {
   nonce: Uint8Array;
   /** Encryption key epoch. */
   key_epoch: number;
+  /**
+   * Content "last edited at" — ms epoch, cleartext. The max `updatedAt` across
+   * the synced objects inside the (encrypted) blob. The L2 node uses it as the
+   * last-writer-wins key when the same wallet's blob arrives from two devices or
+   * via the profile-topic gossip relay (l2-node 0.125.0+). Omit → the node
+   * falls back to the signed envelope timestamp; always set it when you can, so
+   * re-uploading an older copy to seed a fresh node can't roll newer content
+   * back.
+   */
+  updated_at?: number;
 }
 
 /** Report data for moderation. */
@@ -1066,6 +1076,12 @@ export interface KeyVaultSyncData {
   nonce: Uint8Array;
   /** Vault payload format version (currently 1). */
   format_version: number;
+  /**
+   * Write time — ms epoch, cleartext. The L2 node's last-writer-wins key across
+   * devices and the profile-topic gossip relay (l2-node 0.125.0+). Omit → the
+   * node falls back to the signed envelope timestamp.
+   */
+  updated_at?: number;
 }
 
 /** Key-recovery vault response (GET /api/v1/key-vault). */

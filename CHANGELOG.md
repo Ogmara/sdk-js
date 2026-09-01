@@ -5,6 +5,21 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.54.0] - 2026-09-01
+
+### Added
+
+- `SettingsSyncData.updated_at` / `KeyVaultSyncData.updated_at` (optional, ms
+  epoch). Threaded into the `SettingsSync` (0x33) / `KeyVaultSync` (0x38)
+  payloads as a **cleartext** field. l2-node 0.125.0 gossips both per-wallet
+  blobs across the mesh and uses this as its last-writer-wins ordering key, so a
+  device on a different node than the writer sees the same settings and a fresh
+  device restores its key vault from any node. Pass the max `updatedAt` across
+  your synced objects (`channelOrg` / `hiddenDms` / `topicGroups`); if omitted,
+  the builder defaults it to `Date.now()` and the node falls back to the signed
+  envelope timestamp. Setting it explicitly is what makes re-uploading an older
+  copy to seed a fresh node safe — it can't roll back newer content elsewhere.
+
 ## [0.53.0] - 2026-09-01
 
 ### Added

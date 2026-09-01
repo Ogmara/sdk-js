@@ -600,6 +600,9 @@ function settingsSyncPayload(data: SettingsSyncData): Record<string, unknown> {
     encrypted_settings: data.encrypted_settings,
     nonce: data.nonce,
     key_epoch: data.key_epoch,
+    // Cleartext LWW key for the node (0.125.0+). Default to "now" so a build
+    // that forgets to pass it still orders after any older stored copy.
+    updated_at: Math.trunc(data.updated_at ?? Date.now()),
   };
 }
 
@@ -608,6 +611,7 @@ function keyVaultSyncPayload(data: KeyVaultSyncData): Record<string, unknown> {
     encrypted_vault: data.encrypted_vault,
     nonce: data.nonce,
     format_version: data.format_version,
+    updated_at: Math.trunc(data.updated_at ?? Date.now()),
   };
 }
 

@@ -5,6 +5,42 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.53.0] - 2026-09-01
+
+### Added
+
+- **`client.getHotTopics(options?)`** (needs l2-node 0.124.0+). Returns the
+  network's trending news hashtags over a rolling 24h window with usage counts:
+  `{ scope: 'network' | 'local', topics: [{ hashtag, count }] }`, sorted by
+  count descending. `count` is a network-wide distinct-post estimate folded
+  from peer node digests. On a node too old to expose the endpoint (404) it
+  degrades to `{ scope: 'local', topics: [] }` (warns once) instead of
+  throwing, so a feed can call it against any node and hide the section when it
+  comes back empty. `HotTopic`, `HotTopicsResponse`, `HotTopicsOptions` types
+  exported.
+- **`normalizeHashtag(raw)`** — the canonical tag form, byte-for-byte identical
+  to the L2 node's `normalize_tag` (trim → lowercase → strip a leading `#` →
+  `^[a-z0-9-]{1,64}$`, or `null`). Run every tag through this before a
+  follow/filter or a followed-topics setting — a client that normalizes
+  differently from the node silently matches nothing.
+- **`listNews({ tags })`** — OR-set hashtag filter (needs l2-node 0.124.0+):
+  posts carrying ANY of the tags, counted once. Each is normalized + deduped
+  client-side and the list is capped at 50; `tags` wins over `tag` if both are
+  given.
+- `WsEvent` gains `{ type: 'settings_changed' }` — the payload-free nudge a node
+  sends to a wallet's other sessions when its settings blob is rewritten
+  (l2-node 0.124.0+). Re-fetch `getSettings()` and re-apply on receipt.
+
+### Changed
+
+- `listNews({ tag })` now normalizes the tag with `normalizeHashtag` before
+  sending, so `listNews({ tag: 'Klever' })` matches indexed `klever`. A tag
+  with no canonical form is dropped from the request rather than sent verbatim.
+- `extractHashtags` runs every match through `normalizeHashtag`: a `#hello_world`
+  is no longer surfaced (the node's canonical charset is `[a-z0-9-]`, so an
+  underscore tag would never be indexed anyway). Hyphens are now recognised in
+  the match.
+
 ## [0.52.0] - 2026-09-01
 
 ### Added

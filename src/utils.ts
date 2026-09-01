@@ -19,22 +19,60 @@ import { isPrivateIpv4, isPrivateIpv6, isPrivateDnsName } from './sc_discovery';
 export const DEFAULT_NODE_URL = '';
 
 /**
- * Extract hashtags from text content.
+ * Canonical normalized form of a news hashtag (protocol §3.5).
  *
- * Rules (from protocol spec):
- * - Match `#word` patterns (alphanumeric + underscores)
- * - Lowercase all tags
- * - Deduplicate
+ * Procedure — identical to the L2 node's `util::normalize_tag`:
+ * 1. trim ASCII whitespace
+ * 2. strip a single leading `#`, then trim again
+ * 3. **ASCII** lowercase (`A`–`Z` → `a`–`z` only — NOT `toLowerCase()`, which
+ *    folds a few non-ASCII codepoints like U+212A into `[a-z]`)
+ * 4. require `^[a-z0-9-]{1,64}$`
+ *
+ * Returns `null` when the input has no canonical form (empty, too long, or
+ * containing any other character). A follow/filter that normalizes
+ * differently from the node silently matches nothing, so ALWAYS run a tag
+ * through this before sending it to `listNews({ tag })` / `listNews({ tags })`
+ * or storing it in a followed-topics setting.
+ *
+ * @example
+ * normalizeHashtag('#Klever')     // 'klever'
+ * normalizeHashtag('  #DeFi  ')   // 'defi'
+ * normalizeHashtag('under_score') // null (underscore is not [a-z0-9-])
+ */
+export function normalizeHashtag(raw: string): string | null {
+  // ASCII whitespace only — `String.prototype.trim()` and Rust's `str::trim`
+  // strip different Unicode whitespace sets (NEL, ZWNBSP, …); trimming exactly
+  // `[ \t\n\r\x0b\x0c]` keeps this byte-identical to the node's `normalize_tag`.
+  const WS = /^[ \t\n\r\x0b\x0c]+|[ \t\n\r\x0b\x0c]+$/g;
+  const trimmed = raw.replace(WS, '');
+  const inner = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+  const stripped = inner.replace(WS, '');
+  if (stripped.length === 0 || stripped.length > 64) return null;
+  // ASCII casefold only (not toLowerCase — folds U+212A etc. into [a-z]).
+  const lowered = stripped.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  if (!/^[a-z0-9-]+$/.test(lowered)) return null;
+  return lowered;
+}
+
+/**
+ * Extract hashtags from text content, in the node's canonical form.
+ *
+ * Rules (protocol §3.5):
+ * - Match `#word` patterns, then run each through {@link normalizeHashtag}
+ * - Drop tags with no canonical form (e.g. `#hello_world` — underscores are
+ *   not indexed by the node)
+ * - Deduplicate, preserving first-seen order
  * - Maximum 10 tags
  */
 export function extractHashtags(text: string): string[] {
-  const regex = /#([a-zA-Z0-9_]+)/g;
+  const regex = /#([a-zA-Z0-9_-]+)/g;
   const tags = new Set<string>();
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(text)) !== null) {
     if (tags.size >= 10) break;
-    tags.add(match[1].toLowerCase());
+    const n = normalizeHashtag(match[1]);
+    if (n) tags.add(n);
   }
 
   return Array.from(tags);

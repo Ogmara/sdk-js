@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractHashtags, validateNodeUrl } from './utils';
+import { extractHashtags, normalizeHashtag, validateNodeUrl } from './utils';
 
 describe('validateNodeUrl (SSRF, audit B4.2)', () => {
   it('accepts public https nodes', () => {
@@ -64,11 +64,37 @@ describe('extractHashtags', () => {
     expect(extractHashtags('no tags here')).toEqual([]);
   });
 
-  it('should handle hashtags with underscores', () => {
-    expect(extractHashtags('#hello_world')).toEqual(['hello_world']);
+  it('drops tags with underscores (not in the node canonical charset)', () => {
+    // Pre-0.53.0 this returned ['hello_world']; the node's normalize_tag now
+    // rejects `_`, so the SDK must not surface a tag the node won't index.
+    expect(extractHashtags('#hello_world and #web-3')).toEqual(['web-3']);
   });
 
   it('should not match bare # or #', () => {
     expect(extractHashtags('# not a tag')).toEqual([]);
+  });
+});
+
+describe('normalizeHashtag (protocol §3.5 — must mirror the node byte-for-byte)', () => {
+  it('canonicalizes the accepted forms', () => {
+    expect(normalizeHashtag('klever')).toBe('klever');
+    expect(normalizeHashtag('Klever')).toBe('klever');
+    expect(normalizeHashtag('#Klever')).toBe('klever');
+    expect(normalizeHashtag('  #DeFi  ')).toBe('defi');
+    expect(normalizeHashtag('# klever')).toBe('klever');
+    expect(normalizeHashtag('web-3')).toBe('web-3');
+    expect(normalizeHashtag('ONCHAIN2026')).toBe('onchain2026');
+    expect(normalizeHashtag('a'.repeat(64))).toBe('a'.repeat(64));
+  });
+
+  it('returns null for anything with no canonical form', () => {
+    expect(normalizeHashtag('')).toBeNull();
+    expect(normalizeHashtag('   ')).toBeNull();
+    expect(normalizeHashtag('#')).toBeNull();
+    expect(normalizeHashtag('tag with spaces')).toBeNull();
+    expect(normalizeHashtag('under_score')).toBeNull();
+    expect(normalizeHashtag('emoji\u{1F525}')).toBeNull();
+    expect(normalizeHashtag('Кириллица')).toBeNull();
+    expect(normalizeHashtag('a'.repeat(65))).toBeNull();
   });
 });

@@ -117,6 +117,7 @@ export type { VaultKeyring } from './keyVault';
 export * from './types';
 export {
   extractHashtags,
+  normalizeHashtag,
   parseMessageContent,
   applyFormatting,
   pingNode,

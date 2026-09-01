@@ -316,11 +316,50 @@ export interface NewsFeedOptions {
   /** Legacy; echoed by the node but does not paginate. Prefer `before`/`after`. */
   page?: number;
   limit?: number;
+  /** Single-hashtag filter. Normalize with {@link normalizeHashtag} first. */
   tag?: string;
+  /**
+   * OR-set hashtag filter (l2-node 0.124.0+): posts carrying ANY of these
+   * tags, counted once. Each is normalized + deduped client-side and the list
+   * is capped at 50. Wins over `tag` if both are given. Ignored by nodes
+   * older than 0.124.0 (they only read `tag`).
+   */
+  tags?: string[];
   /** Hex `msg_id` cursor — return posts strictly OLDER than this one. */
   before?: string;
   /** Hex `msg_id` cursor — return posts strictly NEWER than this one. Wins over `before`. */
   after?: string;
+}
+
+/** One trending hashtag from {@link OgmaraClient.getHotTopics}. */
+export interface HotTopic {
+  hashtag: string;
+  /**
+   * Network-wide estimate of distinct posts carrying the tag in the window
+   * (HyperLogLog union across contributing nodes, ~±2%, after a median trim).
+   */
+  count: number;
+}
+
+/** Response of {@link OgmaraClient.getHotTopics}. */
+export interface HotTopicsResponse {
+  /**
+   * `'network'` once this node has folded enough peer digests to call the
+   * list network-wide; `'local'` for a freshly-joined / partitioned /
+   * mesh-disabled node still serving only its own counts (show a muted
+   * "network view warming up" hint), or when the endpoint is unavailable.
+   */
+  scope: 'network' | 'local';
+  /** Sorted by `count` descending, ties by `hashtag` ascending. */
+  topics: HotTopic[];
+}
+
+/** Options for {@link OgmaraClient.getHotTopics}. */
+export interface HotTopicsOptions {
+  /** Only `'24h'` is supported by l2-node 0.124.0. */
+  window?: '24h';
+  /** Default 20, node-capped at 100. */
+  limit?: number;
 }
 
 /** Media upload response. */
@@ -442,6 +481,11 @@ export type WsEvent =
   // federated) that captured a member list at delete time — clients should drop
   // it from their local joined-channels list and bounce out of its view.
   | { type: 'channel_deleted'; channel_id: number }
+  // Your cross-device settings blob was rewritten by another of your devices
+  // (l2-node 0.124.0+). Payload-free — the blob is E2E-encrypted. Re-fetch
+  // `GET /api/v1/settings` and re-apply your synced objects (channelOrg,
+  // hiddenDms, topicGroups) under their last-writer-wins merge.
+  | { type: 'settings_changed' }
   | { type: 'error'; code: number; message: string };
 
 /** SDK client configuration. */

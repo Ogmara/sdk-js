@@ -21,6 +21,7 @@ import type { WalletSigner, AuthHeaders, NodeBinding } from './auth';
 import type { PowChallenge } from './pow';
 import { solveChallengeAsync } from './pow';
 import { addressToPubkey } from './encryption';
+import { normalizeHashtag } from './utils';
 import {
   buildChatMessage,
   buildNewsPost,
@@ -69,6 +70,8 @@ import type {
   MessagesResponse,
   NewsResponse,
   NewsFeedOptions,
+  HotTopicsOptions,
+  HotTopicsResponse,
   ClientConfig,
   NodeInfo,
   FollowerListResponse,
@@ -236,6 +239,8 @@ export class OgmaraClient {
 
   /** Whether this client's wallet has been verified (PoW solved or on-chain registered). */
   private powVerified = false;
+  /** One-time guard for the getHotTopics-on-old-node warning. */
+  private hotTopicsUnsupportedLogged = false;
 
   /** In-flight PoW solve, shared across concurrent writes so a burst of requests
    *  (e.g. encrypted-channel key publishes + device binding + mark-read + a send on
@@ -358,6 +363,11 @@ export class OgmaraClient {
    * pagination — `{ before }` for the page strictly older than a post,
    * `{ after }` for the page strictly newer (l2-node 0.123.0+). `after` wins if
    * both are set. The response's `has_more` says whether to keep paging.
+   *
+   * `{ tag }` filters to one hashtag; `{ tags }` is an OR-set (l2-node
+   * 0.124.0+, capped at 50, wins over `tag`). Both are normalized to canonical
+   * form ({@link normalizeHashtag}) client-side, so `tag: 'Klever'` matches
+   * indexed `klever`.
    */
   async listNews(
     pageOrOptions: number | NewsFeedOptions = 1,
@@ -369,10 +379,53 @@ export class OgmaraClient {
         ? pageOrOptions
         : { page: pageOrOptions, limit, tag };
     let path = `/api/v1/news?page=${o.page ?? 1}&limit=${o.limit ?? 20}`;
-    if (o.tag) path += `&tag=${encodeURIComponent(o.tag)}`;
+    const tagsList = (o.tags ?? [])
+      .map((t) => normalizeHashtag(t))
+      .filter((t): t is string => t !== null);
+    const uniqueTags = Array.from(new Set(tagsList)).slice(0, 50);
+    if (uniqueTags.length > 0) {
+      path += `&tags=${encodeURIComponent(uniqueTags.join(','))}`;
+    } else if (o.tag) {
+      const n = normalizeHashtag(o.tag);
+      if (n) path += `&tag=${encodeURIComponent(n)}`;
+    }
     if (o.after) path += `&after=${encodeURIComponent(o.after)}`;
     else if (o.before) path += `&before=${encodeURIComponent(o.before)}`;
     return this.get(path);
+  }
+
+  /**
+   * GET /api/v1/news/hot-topics — trending news hashtags across the network
+   * over a rolling 24h window, with usage counts (l2-node 0.124.0+).
+   *
+   * Counts are network-wide distinct-post estimates folded from peer node
+   * digests. A node too old to expose the endpoint (404) degrades to
+   * `{ scope: 'local', topics: [] }` (logged once) rather than throwing — a
+   * News Feed can safely call this against any node and hide the section when
+   * it comes back empty. Cache the result ~60s (matches the node's own
+   * server-side cache); do not poll faster.
+   */
+  async getHotTopics(options?: HotTopicsOptions): Promise<HotTopicsResponse> {
+    const window = options?.window ?? '24h';
+    const limit = options?.limit ?? 20;
+    try {
+      return await this.get<HotTopicsResponse>(
+        `/api/v1/news/hot-topics?window=${encodeURIComponent(window)}&limit=${limit}`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('404')) {
+        if (!this.hotTopicsUnsupportedLogged) {
+          this.hotTopicsUnsupportedLogged = true;
+          console.warn(
+            '[ogmara] getHotTopics: node does not expose /api/v1/news/hot-topics ' +
+              '(needs l2-node 0.124.0+) — returning an empty local result.',
+          );
+        }
+        return { scope: 'local', topics: [] };
+      }
+      throw err;
+    }
   }
 
   /** GET /api/v1/network/nodes */

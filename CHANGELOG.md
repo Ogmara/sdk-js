@@ -5,6 +5,27 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.52.0] - 2026-09-01
+
+### Added
+
+- **Cursor pagination for the news feeds** (needs l2-node 0.123.0+). `listNews`
+  now also accepts a `NewsFeedOptions` object as its first argument:
+  `listNews({ before })` returns the page of posts strictly older than that hex
+  `msg_id`, `listNews({ after })` the page strictly newer (`after` wins if both
+  are given). `getFeed` gains the same `before` / `after` hex-`msg_id` cursors.
+  Both responses now carry an optional `has_more` boolean. This is the SDK half
+  of the client News Feed rework (infinite scroll through history +
+  resume-at-last-position).
+- `NewsFeedOptions` type exported.
+
+### Changed
+
+- `listNews(page, limit, tag)` positional form still works unchanged. `getFeed`'s
+  `before` option is now typed `string | number`; a numeric value is still
+  accepted for source compatibility but no longer paginates (l2-node < 0.123.0
+  ignored it too, and 0.123.0 treats a non-`msg_id` cursor as "newest page").
+
 ## [0.51.0] - 2026-08-29
 
 Closes the 3 remaining gaps from a dedicated newsbot-driven audit session

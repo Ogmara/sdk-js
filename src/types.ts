@@ -299,6 +299,28 @@ export interface NewsResponse {
   posts: Envelope[];
   total: number;
   page: number;
+  /**
+   * True when the node's raw index scan filled the requested `limit`, i.e.
+   * another page very likely exists in the cursor direction. Measured before
+   * the node's follower-visibility filter, so it can be conservatively `true`
+   * on the final page. Absent on l2-node < 0.123.0. (l2-node 0.123.0+)
+   */
+  has_more?: boolean;
+}
+
+/**
+ * Options for {@link OgmaraClient.listNews}. Pass instead of the positional
+ * `(page, limit, tag)` args to use cursor pagination (l2-node 0.123.0+).
+ */
+export interface NewsFeedOptions {
+  /** Legacy; echoed by the node but does not paginate. Prefer `before`/`after`. */
+  page?: number;
+  limit?: number;
+  tag?: string;
+  /** Hex `msg_id` cursor — return posts strictly OLDER than this one. */
+  before?: string;
+  /** Hex `msg_id` cursor — return posts strictly NEWER than this one. Wins over `before`. */
+  after?: string;
 }
 
 /** Media upload response. */
@@ -566,6 +588,8 @@ export interface FeedResponse {
   posts: Envelope[];
   total: number;
   page: number;
+  /** See {@link NewsResponse.has_more}. Absent on l2-node < 0.123.0. */
+  has_more?: boolean;
 }
 
 /** Pagination options. */

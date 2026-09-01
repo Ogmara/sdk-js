@@ -68,6 +68,7 @@ import type {
   ChannelsResponse,
   MessagesResponse,
   NewsResponse,
+  NewsFeedOptions,
   ClientConfig,
   NodeInfo,
   FollowerListResponse,
@@ -349,10 +350,28 @@ export class OgmaraClient {
     return this.getAuthenticated('/api/v1/channels/unread');
   }
 
-  /** GET /api/v1/news */
-  async listNews(page = 1, limit = 20, tag?: string): Promise<NewsResponse> {
-    let path = `/api/v1/news?page=${page}&limit=${limit}`;
-    if (tag) path += `&tag=${encodeURIComponent(tag)}`;
+  /**
+   * GET /api/v1/news — the global news feed, newest first.
+   *
+   * Back-compat positional form: `listNews(page, limit, tag)`. Preferred form:
+   * pass a {@link NewsFeedOptions} object as the first argument to use cursor
+   * pagination — `{ before }` for the page strictly older than a post,
+   * `{ after }` for the page strictly newer (l2-node 0.123.0+). `after` wins if
+   * both are set. The response's `has_more` says whether to keep paging.
+   */
+  async listNews(
+    pageOrOptions: number | NewsFeedOptions = 1,
+    limit = 20,
+    tag?: string,
+  ): Promise<NewsResponse> {
+    const o: NewsFeedOptions =
+      typeof pageOrOptions === 'object'
+        ? pageOrOptions
+        : { page: pageOrOptions, limit, tag };
+    let path = `/api/v1/news?page=${o.page ?? 1}&limit=${o.limit ?? 20}`;
+    if (o.tag) path += `&tag=${encodeURIComponent(o.tag)}`;
+    if (o.after) path += `&after=${encodeURIComponent(o.after)}`;
+    else if (o.before) path += `&before=${encodeURIComponent(o.before)}`;
     return this.get(path);
   }
 
@@ -656,13 +675,24 @@ export class OgmaraClient {
     await this.deleteEnvelope(`/api/v1/users/${encodeURIComponent(target)}/follow`, envelope);
   }
 
-  /** GET /api/v1/feed — personal news feed (posts from followed users). */
-  async getFeed(options?: PaginationOptions & { before?: number }): Promise<FeedResponse> {
+  /**
+   * GET /api/v1/feed — personal news feed (posts from followed users).
+   *
+   * `before` / `after` are hex `msg_id` cursors (older / newer page), same
+   * semantics as {@link listNews} (l2-node 0.123.0+); `after` wins if both are
+   * set. A numeric `before` is accepted for source compatibility but no longer
+   * paginates — older nodes ignored it too.
+   */
+  async getFeed(
+    options?: PaginationOptions & { before?: string | number; after?: string },
+  ): Promise<FeedResponse> {
     if (!this.signer) throw new Error('Signer required');
     const page = options?.page ?? 1;
     const limit = options?.limit ?? 20;
     let path = `/api/v1/feed?page=${page}&limit=${limit}`;
-    if (options?.before !== undefined) path += `&before=${options.before}`;
+    if (options?.after) path += `&after=${encodeURIComponent(options.after)}`;
+    else if (options?.before !== undefined)
+      path += `&before=${encodeURIComponent(String(options.before))}`;
     return this.getAuthenticated(path);
   }
 

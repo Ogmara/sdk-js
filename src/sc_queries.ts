@@ -20,6 +20,7 @@ import {
   ScRequireError,
   bytesToHex,
   bytesToUtf8,
+  decodeBigUintBe,
   decodeU64Be,
   u64MinimalHex,
   vmQuery,
@@ -60,6 +61,105 @@ function assertU64Arg(v: number, name: string): void {
   if (!Number.isInteger(v) || v < 0) {
     throw new Error(`${name} must be a non-negative integer, got ${v}`);
   }
+}
+
+/**
+ * The current USER registration fee, in raw KLV units (1 KLV = 10^6).
+ * Mirrors the SC's `getRegistrationFee` view (smart-contract 0.10.0+).
+ *
+ * `0n` means registration is free, which is the state of a deployed
+ * contract until its owner switches the fee on — so it is an expected
+ * reading, not an error. A contract older than 0.10.0 has no such view;
+ * that surfaces as a `require` failure and also returns `0n`, which is the
+ * correct answer for it too.
+ *
+ * **Read this before building a `register` transaction.** The fee is
+ * node-governance controlled and changes with no client release.
+ *
+ * Returns `bigint`, not `number` — see `decodeBigUintBe`.
+ */
+export async function getRegistrationFee(
+  network: ScNetwork,
+  opts: ScQueryOptions = {},
+): Promise<bigint> {
+  const { rpc, sc } = net(network);
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(rpc, sc, 'getRegistrationFee', [], opts.timeoutMs ?? 8000);
+  } catch (e) {
+    if (e instanceof ScRequireError) return 0n;
+    throw e;
+  }
+  return items.length > 0 ? decodeBigUintBe(items[0]) : 0n;
+}
+
+/**
+ * Share of each user registration fee routed to the node the user
+ * registered through, in basis points (10_000 = 100%). `0` means the whole
+ * fee goes to the protocol treasury. Capped on-chain at 8000 (80%).
+ * Mirrors the SC's `getNodeFeeShareBps` view (smart-contract 0.10.0+).
+ *
+ * A `number` rather than a `bigint`: this is a `u32` bounded well below
+ * 2^53, so there is no precision concern and callers want plain arithmetic.
+ */
+export async function getNodeFeeShareBps(
+  network: ScNetwork,
+  opts: ScQueryOptions = {},
+): Promise<number> {
+  const { rpc, sc } = net(network);
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(rpc, sc, 'getNodeFeeShareBps', [], opts.timeoutMs ?? 8000);
+  } catch (e) {
+    if (e instanceof ScRequireError) return 0;
+    throw e;
+  }
+  return items.length > 0 ? decodeU64Be(items[0]) : 0;
+}
+
+/**
+ * Unclaimed KLV (raw units) that `klvAddress` has accrued from users who
+ * registered through its node, claimable with the SC's `claimNodeEarnings`
+ * endpoint. `0n` for an address that is not a node or has nothing owed.
+ * Mirrors the SC's `getNodeEarnings` view (smart-contract 0.10.0+).
+ */
+export async function getNodeEarnings(
+  network: ScNetwork,
+  klvAddress: string,
+  opts: ScQueryOptions = {},
+): Promise<bigint> {
+  const { rpc, sc } = net(network);
+  // Verifies the bech32 checksum client-side, so a mistyped address fails
+  // clearly here instead of returning an ambiguous zero balance.
+  const addressHex = bytesToHex(addressToPubkey(klvAddress));
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(rpc, sc, 'getNodeEarnings', [addressHex], opts.timeoutMs ?? 8000);
+  } catch (e) {
+    if (e instanceof ScRequireError) return 0n;
+    throw e;
+  }
+  return items.length > 0 ? decodeBigUintBe(items[0]) : 0n;
+}
+
+/**
+ * Total unclaimed node earnings across every operator — the contract's
+ * outstanding liability to node operators, in raw KLV units. Mirrors the
+ * SC's `getTotalUnclaimedNodeEarnings` view (smart-contract 0.10.0+).
+ */
+export async function getTotalUnclaimedNodeEarnings(
+  network: ScNetwork,
+  opts: ScQueryOptions = {},
+): Promise<bigint> {
+  const { rpc, sc } = net(network);
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(rpc, sc, 'getTotalUnclaimedNodeEarnings', [], opts.timeoutMs ?? 8000);
+  } catch (e) {
+    if (e instanceof ScRequireError) return 0n;
+    throw e;
+  }
+  return items.length > 0 ? decodeBigUintBe(items[0]) : 0n;
 }
 
 /**

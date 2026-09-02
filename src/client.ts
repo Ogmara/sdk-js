@@ -63,6 +63,7 @@ import {
 } from './envelope';
 import type {
   Health,
+  RegistrationInfo,
   NetworkStats,
   Channel,
   NewsCommentData,
@@ -284,6 +285,21 @@ export class OgmaraClient {
   /** GET /api/v1/health */
   async health(): Promise<Health> {
     return this.get('/api/v1/health');
+  }
+
+  /**
+   * GET /api/v1/registration/info
+   *
+   * The live registration fee, the node/treasury split, and the operator
+   * address to credit. Read this before building a `register` transaction —
+   * the fee is governance-controlled and changes with no client release.
+   *
+   * Older nodes (pre-0.126.0) do not have this route and will 404; treat that
+   * the same as `contract_configured: false` — the fee is unknown, so let the
+   * transaction itself surface the real amount rather than assuming zero.
+   */
+  async registrationInfo(): Promise<RegistrationInfo> {
+    return this.get('/api/v1/registration/info');
   }
 
   /** GET /api/v1/network/stats */

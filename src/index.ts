@@ -144,6 +144,10 @@ export type {
 } from './sc_discovery';
 export {
   getUserRegisteredAt,
+  getRegistrationFee,
+  getNodeFeeShareBps,
+  getNodeEarnings,
+  getTotalUnclaimedNodeEarnings,
   getChannelInfo,
   getEscalatedCanonical,
 } from './sc_queries';

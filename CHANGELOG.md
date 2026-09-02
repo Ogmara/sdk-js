@@ -5,6 +5,46 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.55.0] - 2026-09-02
+
+Read the user registration fee before registering. Smart-contract 0.10.0
+charges a governance-controlled fee and routes a share of it to the node the
+user registered through; this release exposes both.
+
+### Added
+
+- `client.registrationInfo()` — `GET /api/v1/registration/info` (l2-node
+  0.126.0+): the live fee, the node/treasury split, and the operator address
+  to credit. **Read this before building a `register` transaction** — the fee
+  is governance-controlled and changes with no client release. Older nodes
+  404; treat that as "fee unknown", never as "free".
+- `RegistrationInfo` type. Field types are deliberately asymmetric and are the
+  easy thing to get wrong: `registration_fee` is a decimal **string** of raw
+  KLV units (parse with `BigInt`, never `Number`), `node_fee_share_bps` is a
+  **number**, and every fee field is **`null`** when the node has no contract
+  configured — which means the fee is UNKNOWN, not zero.
+- On-chain accessors in `sc_queries`: `getRegistrationFee`,
+  `getNodeFeeShareBps`, `getNodeEarnings(address)`,
+  `getTotalUnclaimedNodeEarnings`.
+- `decodeBigUintBe` in `sc_discovery` — decodes a `BigUint` return value as a
+  `bigint`.
+
+### Notes
+
+- **The three balance accessors return `bigint`, not `number`.** They carry
+  raw KLV amounts and accruing balances with no on-chain upper bound, so a
+  `number` would silently lose precision past 2^53. A regression test pins
+  this by round-tripping a value that `Number` cannot represent.
+  `getNodeFeeShareBps` stays a `number`: it is a `u32` capped at 8000.
+- `getNodeEarnings` verifies the bech32 checksum client-side, so a mistyped
+  address throws instead of returning a plausible-looking zero balance.
+- A contract older than 0.10.0 has none of these views; that surfaces as a
+  `require` failure and returns `0n` / `0`, which is the correct reading for
+  such a contract (registration was free).
+- **Clients must pin `contract_address` from their own configuration.**
+  `registrationInfo()` reports the node's, for cross-checking only — a
+  malicious operator could otherwise serve their own and redirect the fee.
+
 ## [0.54.0] - 2026-09-01
 
 ### Added

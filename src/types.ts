@@ -218,6 +218,50 @@ export interface DmConversation {
 }
 
 /** Health check response. */
+/**
+ * Everything needed to build a `register` transaction, from
+ * `GET /api/v1/registration/info` (l2-node 0.126.0+, smart-contract 0.10.0+).
+ *
+ * **Field types are deliberately asymmetric — the usual mistake is treating
+ * them uniformly.** `registration_fee` is a decimal STRING of raw KLV units
+ * (6 decimals); parse it with `BigInt`, never `Number`. `node_fee_share_bps`
+ * is a plain number. Every fee field is `null` when the node has no contract
+ * configured.
+ */
+export interface RegistrationInfo {
+  /**
+   * Fee in raw KLV units as a decimal string, e.g. `"100000000"` = 100 KLV.
+   * `"0"` means registration is currently free. **`null` means UNKNOWN, not
+   * free** — the node has no contract configured, and a client that pins its
+   * own contract address may still face a fee. Never build a zero-value
+   * transaction off a `null`.
+   */
+  registration_fee: string | null;
+  /** Display-ready KLV amount, trailing zeros trimmed (`"100"`, `"50.5"`).
+   *  For rendering only — never do arithmetic on it. */
+  registration_fee_klv: string | null;
+  /** Share routed to the referring node, in basis points (0-8000). */
+  node_fee_share_bps: number | null;
+  /**
+   * The node operator's Klever wallet — pass it as `register`'s optional
+   * second argument so this operator is credited their share. `null` when
+   * the node has anchoring disabled: register with NO node argument and the
+   * whole fee goes to the protocol treasury.
+   */
+  operator_address: string | null;
+  /**
+   * The contract this node is reading. **Cross-check only — do not build a
+   * transaction against it.** Clients must pin their own contract address;
+   * a malicious operator could otherwise serve their own and redirect the fee.
+   */
+  contract_address: string | null;
+  /** `"testnet"` or `"mainnet"`. */
+  network: string;
+  /** `false` when the node has no contract configured, in which case every
+   *  fee field above is `null` and the fee is unknown rather than zero. */
+  contract_configured: boolean;
+}
+
 export interface Health {
   status: string;
   version: string;

@@ -1,5 +1,13 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { getUserRegisteredAt, getChannelInfo, getEscalatedCanonical } from './sc_queries';
+import {
+  getUserRegisteredAt,
+  getChannelInfo,
+  getEscalatedCanonical,
+  getRegistrationFee,
+  getNodeFeeShareBps,
+  getNodeEarnings,
+  getTotalUnclaimedNodeEarnings,
+} from './sc_queries';
 import { getActiveNodeCount } from './sc_discovery';
 
 // ── Helpers to build a fake Klever `/vm/query` response (mirrors
@@ -148,5 +156,65 @@ describe('getActiveNodeCount', () => {
   it('returns 0 on a require! failure (empty SC state)', async () => {
     vi.stubGlobal('fetch', async () => vmRequireFail('nothing registered'));
     expect(await getActiveNodeCount('testnet')).toBe(0);
+  });
+});
+
+// ── Registration fee + node revenue sharing (smart-contract 0.10.0) ────
+
+describe('registration fee views', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('decodes the fee as an exact bigint, not a lossy number', async () => {
+    // 100 KLV in raw units = 100_000_000 = 0x05F5E100.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64([0x05, 0xf5, 0xe1, 0x00])]));
+    await expect(getRegistrationFee('testnet')).resolves.toBe(100_000_000n);
+  });
+
+  it('keeps full precision past 2^53, where a number would silently round', async () => {
+    // 2^64 - 1: exactly representable as a bigint, NOT as a JS number.
+    const bytes = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64(bytes)]));
+    const v = await getRegistrationFee('testnet');
+    expect(v).toBe(18_446_744_073_709_551_615n);
+    // The precision the bigint buys us: Number() cannot represent this.
+    expect(v).not.toBe(BigInt(Number(v)));
+  });
+
+  it('reports a free/unset fee as 0n', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64([])]));
+    await expect(getRegistrationFee('testnet')).resolves.toBe(0n);
+  });
+
+  it('treats a contract without the view (pre-0.10.0) as free', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmRequireFail('invalid function'));
+    await expect(getRegistrationFee('testnet')).resolves.toBe(0n);
+  });
+
+  it('decodes the fee share as a plain number', async () => {
+    // 5000 bps = 0x1388.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64([0x13, 0x88])]));
+    const bps = await getNodeFeeShareBps('testnet');
+    expect(bps).toBe(5000);
+    expect(typeof bps).toBe('number');
+  });
+
+  it('reads a node balance as a bigint', async () => {
+    // 50 KLV = 50_000_000 = 0x02FAF080.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64([0x02, 0xfa, 0xf0, 0x80])]));
+    await expect(
+      getNodeEarnings('testnet', 'klv1heatuswg9u9u356snvj20fn9jvcgva8fea5v54uhqadchhaz6pgq26t8jh'),
+    ).resolves.toBe(50_000_000n);
+  });
+
+  it('rejects a malformed address client-side rather than returning a false zero', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch');
+    await expect(getNodeEarnings('testnet', 'klv1notavalidaddress')).rejects.toThrow();
+    // Must fail before any RPC round-trip.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('reads the network-wide unclaimed total as a bigint', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(vmOk([b64([0x01, 0x00])]));
+    await expect(getTotalUnclaimedNodeEarnings('testnet')).resolves.toBe(256n);
   });
 });

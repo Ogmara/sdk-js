@@ -132,6 +132,23 @@ export function u64MinimalHex(v: number): string {
 
 /** Decode minimal-BE bytes → number (caps at 2^53; fine for u64 ts/counts).
  *  Exported for reuse by `sc_queries.ts`. */
+/**
+ * Decode a big-endian `BigUint` return value as a `bigint`.
+ *
+ * Deliberately NOT `number`: these carry raw KLV amounts (6 decimals) and
+ * accruing balances that have no on-chain upper bound, so a `number` would
+ * silently lose precision past 2^53. `bigint` is exact at any size, and
+ * forces callers to be explicit about formatting rather than doing float
+ * arithmetic on money. Empty input decodes to `0n` — the chain's own
+ * encoding for zero.
+ */
+export function decodeBigUintBe(bytes: Uint8Array): bigint {
+  if (!bytes || bytes.length === 0) return 0n;
+  let n = 0n;
+  for (let i = 0; i < bytes.length; i++) n = (n << 8n) | BigInt(bytes[i] & 0xff);
+  return n;
+}
+
 export function decodeU64Be(bytes: Uint8Array): number {
   if (!bytes || bytes.length === 0) return 0;
   if (bytes.length > 8) return 0;

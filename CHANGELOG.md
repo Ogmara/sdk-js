@@ -5,6 +5,46 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.56.0] - 2026-09-05
+
+### Security
+
+- **`OgmaraClient` never told `fetch()` to bypass the HTTP cache, so a GET
+  response could be served to the WRONG authenticated identity.** The
+  browser/webview's default HTTP cache keys a GET response by URL alone,
+  blind to the signed `X-Ogmara-Auth`/`X-Ogmara-Address` headers that
+  determine which wallet a response is actually scoped to. On a client that
+  holds multiple wallets and switches between them in one session (desktop's
+  multi-account vault v3), a request to the exact same path under a NEW
+  identity (most commonly `GET /api/v1/channels?page=1&limit=50`, fetched
+  right after an account switch) could be silently satisfied from the
+  cache with the PREVIOUS identity's real response — including private
+  channels the new identity was never a member of — with no network round
+  trip and no re-validation against the new auth headers.
+  Found via a live diagnostic trace on desktop: a brand-new wallet's very
+  first-ever channel-list request came back in ~7ms (impossible for a real
+  round trip to the actual remote test node) with content that exactly
+  matched a DIFFERENT wallet's real channel list, including two private
+  channels that wallet was a genuine member of. This was the actual root
+  cause of a cross-account leak that survived five independent rounds of
+  correct account-switch/identity fixes on the desktop client (1.76.0-1.76.2)
+  — all of them addressed real bugs in JS-level state management, but none
+  of them could have fixed this, because the leak happens beneath the JS
+  layer, at the HTTP cache.
+  Fixed by adding `cache: 'no-store'` to all 11 `fetch()` call sites in
+  `client.ts` — the GET wrappers (`get()`/`getAuthenticated()`/
+  `getAbsolute()`) that are actually exploitable via browser GET caching,
+  and the POST/PUT/DELETE write wrappers for full defense-in-depth even
+  though non-GET methods aren't cached by browsers by default.
+  `cache: 'no-store'` (not `no-cache`) is required: `no-cache` still permits
+  a stored response body to be reused on a `304 Not Modified` conditional
+  revalidation, and nothing about this server's ETag/Last-Modified logic (if
+  any) varies by caller identity, so `no-cache` would not have closed this.
+  Added `client.cache.test.ts`, a regression test asserting every `fetch()`
+  call this client makes carries `cache: 'no-store'`.
+  Every client built on this SDK (desktop, web, mobile) inherited this bug —
+  update as soon as this version is available.
+
 ## [0.55.0] - 2026-09-02
 
 Read the user registration fee before registering. Smart-contract 0.10.0

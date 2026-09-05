@@ -886,6 +886,7 @@ export class OgmaraClient {
         headers: { ...headers }, // no content-type — FormData sets it with boundary
         body: formData,
         signal: controller.signal,
+        cache: 'no-store',
       });
       if (!resp.ok) {
         const text = await boundedText(resp).catch(() => '');
@@ -1021,6 +1022,7 @@ export class OgmaraClient {
         method: 'POST',
         headers: { ...headers },
         signal: controller.signal,
+        cache: 'no-store',
       });
       if (!resp.ok) {
         const text = await boundedText(resp).catch(() => '');
@@ -1043,6 +1045,7 @@ export class OgmaraClient {
         method: 'DELETE',
         headers: { ...headers },
         signal: controller.signal,
+        cache: 'no-store',
       });
       if (!resp.ok) {
         const text = await boundedText(resp).catch(() => '');
@@ -1478,7 +1481,19 @@ export class OgmaraClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal });
+      // `cache: 'no-store'`: the browser/webview's HTTP cache keys a GET
+      // response by URL only, blind to the auth headers that determine WHO
+      // this response is for. Two different signed identities requesting the
+      // exact same path (e.g. `GET /api/v1/channels?page=1&limit=50` right
+      // after a multi-account switch) would otherwise let the second caller
+      // silently receive the FIRST caller's real response straight from
+      // cache — including private data they were never authorized to see —
+      // with no network round trip and no re-validation against the new auth
+      // headers. Every authenticated endpoint MUST bypass this cache; the
+      // server, not the local HTTP cache, is the only thing allowed to
+      // decide what a given signed identity can see. See project memory:
+      // cross-account leak, 2026-09-05 (HTTP-cache root cause).
+      const resp = await fetch(url, { headers: { ...headers }, signal: controller.signal, cache: 'no-store' });
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
@@ -1517,7 +1532,14 @@ export class OgmaraClient {
           headers = {};
         }
       }
-      const resp = await fetch(url, { headers, signal: controller.signal });
+      // `cache: 'no-store'` — see the identical comment in `getAuthenticated`
+      // above. This is the MORE dangerous of the two paths: `get()` is used
+      // by "optional-auth" endpoints like `listChannels()` that behave
+      // differently per caller (a private channel is included only for an
+      // authenticated member) — this is the exact call whose cached
+      // response, replayed across a multi-account switch with no re-fetch,
+      // handed a brand-new account another account's private channel list.
+      const resp = await fetch(url, { headers, signal: controller.signal, cache: 'no-store' });
 
       // Handle PoW challenge: auto-solve and retry once
       if (resp.status === 429 && !this.powVerified) {
@@ -1551,7 +1573,7 @@ export class OgmaraClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
     try {
-      const resp = await fetch(url, { signal: controller.signal });
+      const resp = await fetch(url, { signal: controller.signal, cache: 'no-store' });
       if (!resp.ok) {
         const text = await boundedText(resp).catch(() => '');
         throw new Error(`API error (${resp.status}): ${text.slice(0, 200)}`);
@@ -1585,6 +1607,7 @@ export class OgmaraClient {
         },
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
+        cache: 'no-store',
       });
 
       // Handle PoW challenge: auto-solve and retry once
@@ -1622,6 +1645,7 @@ export class OgmaraClient {
         headers: { ...headers, 'content-type': 'application/octet-stream' },
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
+        cache: 'no-store',
       });
 
       // Handle PoW challenge: auto-solve and retry once
@@ -1657,6 +1681,7 @@ export class OgmaraClient {
         headers: { ...headers, 'content-type': 'application/octet-stream' },
         body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
         signal: controller.signal,
+        cache: 'no-store',
       });
 
       // Handle PoW challenge: auto-solve and retry once
@@ -1691,6 +1716,7 @@ export class OgmaraClient {
         headers: { ...headers, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         signal: controller.signal,
+        cache: 'no-store',
       });
 
       // Handle PoW challenge: auto-solve and retry once
@@ -1758,6 +1784,7 @@ export class OgmaraClient {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(solution),
+      cache: 'no-store',
     });
 
     if (!resp.ok) {

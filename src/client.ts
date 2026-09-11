@@ -98,6 +98,8 @@ import type {
   RepostsResponse,
   BookmarksResponse,
   ChannelMembersResponse,
+  ChannelBotsResponse,
+  BotDescriptor,
   ChannelPinsResponse,
   ChannelBansResponse,
   ChannelDetailResponse,
@@ -679,6 +681,20 @@ export class OgmaraClient {
     return this.get(`/api/v1/channels/${channelId}/members?page=${page}&limit=${limit}`);
   }
 
+  /**
+   * GET /api/v1/channels/:channelId/bots
+   *
+   * The bots in a channel and the commands they answer to — the data source for
+   * the `/`-command autocomplete. Reuses the same access rule as `/members`, so
+   * a non-member of a private channel gets a 404.
+   *
+   * Check `scan_capped` / `result_capped`: the node bounds both the member scan
+   * and the response, and a capped list is not the whole picture.
+   */
+  async getChannelBots(channelId: number): Promise<ChannelBotsResponse> {
+    return this.get(`/api/v1/channels/${channelId}/bots`);
+  }
+
   /** GET /api/v1/channels/:channelId/pins */
   async getChannelPins(channelId: number): Promise<ChannelPinsResponse> {
     return this.get(`/api/v1/channels/${channelId}/pins`);
@@ -903,6 +919,39 @@ export class OgmaraClient {
     if (!this.signer) throw new Error('Signer required');
     const envelope = await buildProfileUpdate(this.signer, data);
     await this.putEnvelope('/api/v1/profile', envelope);
+  }
+
+  /**
+   * Declare this wallet a bot and publish the commands it answers to
+   * (protocol §3.11).
+   *
+   * Self-declared and permissionless — no registration, no fee, no allowlist.
+   * It is a hint for clients and grants no capability: no node treats a bot
+   * differently for having set it.
+   *
+   * **Call this unconditionally on every start, and do not track what you last
+   * published.** That local state desyncs from what a node actually holds —
+   * after a node wipe, on a fresh node, or on a dropped gossip message — and
+   * leaves your commands invisible because the bot believes it already
+   * advertised them. The node compares content and suppresses the broadcast
+   * when nothing changed, so republishing costs nothing.
+   *
+   * Caps are validated locally before signing, so a bad descriptor throws here
+   * rather than coming back as an opaque rejection.
+   */
+  async setBotCommands(descriptor: Omit<BotDescriptor, 'is_bot'>): Promise<void> {
+    await this.updateProfile({ bot: { is_bot: true, ...descriptor } });
+  }
+
+  /**
+   * Un-declare this wallet as a bot, clearing its handle and command list.
+   *
+   * This is the explicit clear. Simply omitting `bot` from a profile update
+   * means "unchanged", which is why an ordinary display-name edit cannot wipe a
+   * bot's commands by accident.
+   */
+  async clearBotIdentity(): Promise<void> {
+    await this.updateProfile({ bot: { is_bot: false, handle: null, commands: [] } });
   }
 
   /** GET /api/v1/dm/conversations — list DM conversations. */

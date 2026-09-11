@@ -91,6 +91,13 @@ export {
 } from './media';
 export type { MediaDescriptor, EncryptedFile } from './media';
 export { solveChallenge, solveChallengeAsync } from './pow';
+
+// Bot command parsing (protocol §3.3, §3.11). `parseCommand` is the bot
+// author's half of the contract — see its doc comment for why a bot must fall
+// through silently on a command it does not implement.
+export { parseCommand } from './commands';
+export type { ParsedCommand, CommandMessage } from './commands';
+export { validateBotDescriptor } from './envelope';
 export type { PowChallenge, PowSolution, PowResult } from './pow';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';

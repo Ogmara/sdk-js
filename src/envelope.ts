@@ -19,6 +19,8 @@ import {
   PROTOCOL_VERSION,
   MessageType,
   MSG_TYPE_NAME,
+  BOT_LIMITS,
+  type BotDescriptor,
   type Attachment,
   type ContentRating,
   type ChatMessageData,
@@ -146,11 +148,77 @@ function newsCommentPayload(data: NewsCommentData): Record<string, unknown> {
   };
 }
 
+/**
+ * Validate a bot descriptor against the node's caps BEFORE signing.
+ *
+ * The node rejects the whole envelope on any violation, so catching it here
+ * turns an opaque HTTP rejection into a useful local error for the bot author.
+ * Deliberately mirrors `l2-node/src/messages/validation.rs`; if the caps ever
+ * diverge, the node is authoritative.
+ */
+export function validateBotDescriptor(bot: BotDescriptor): void {
+  if (bot.handle != null) {
+    if (bot.handle.length < BOT_LIMITS.MIN_HANDLE || bot.handle.length > BOT_LIMITS.MAX_HANDLE) {
+      throw new Error(
+        `bot handle must be ${BOT_LIMITS.MIN_HANDLE}-${BOT_LIMITS.MAX_HANDLE} characters`,
+      );
+    }
+    if (!/^[A-Za-z0-9_]+$/.test(bot.handle)) {
+      throw new Error('bot handle must match ^[A-Za-z0-9_]+$ (ASCII only)');
+    }
+  }
+  if (bot.commands == null) return;
+  if (bot.commands.length > BOT_LIMITS.MAX_COMMANDS) {
+    throw new Error(`too many bot commands (max ${BOT_LIMITS.MAX_COMMANDS})`);
+  }
+  for (const cmd of bot.commands) {
+    if (!cmd.name || cmd.name.length > BOT_LIMITS.MAX_COMMAND_NAME) {
+      throw new Error(`bot command name must be 1-${BOT_LIMITS.MAX_COMMAND_NAME} characters`);
+    }
+    // Lowercase on the wire. Consumers match case-insensitively, but declaring
+    // `/Dom` is refused so `/Dom` and `/dom` can never be two commands.
+    if (!/^[a-z0-9_]+$/.test(cmd.name)) {
+      throw new Error(
+        `bot command name "${cmd.name}" must match ^[a-z0-9_]+$ (lowercase, no leading "/")`,
+      );
+    }
+    if (!cmd.description || cmd.description.length > BOT_LIMITS.MAX_COMMAND_DESCRIPTION) {
+      throw new Error(
+        `bot command description must be 1-${BOT_LIMITS.MAX_COMMAND_DESCRIPTION} characters`,
+      );
+    }
+    if (cmd.args_hint != null && cmd.args_hint.length > BOT_LIMITS.MAX_ARGS_HINT) {
+      throw new Error(`bot command args_hint must be at most ${BOT_LIMITS.MAX_ARGS_HINT} characters`);
+    }
+  }
+}
+
+function botDescriptorPayload(bot: BotDescriptor): Record<string, unknown> {
+  validateBotDescriptor(bot);
+  return {
+    is_bot: bot.is_bot,
+    handle: bot.handle ?? null,
+    // `null` means "leave the stored list alone"; `[]` clears it. Do not
+    // collapse these — `?? null` preserves an explicit empty array.
+    commands:
+      bot.commands == null
+        ? null
+        : bot.commands.map((c) => ({
+            name: c.name,
+            description: c.description,
+            args_hint: c.args_hint ?? null,
+          })),
+  };
+}
+
 function profileUpdatePayload(data: ProfileUpdateData): Record<string, unknown> {
   return {
     display_name: data.display_name ?? null,
     avatar_cid: data.avatar_cid ?? null,
     bio: data.bio ?? null,
+    // Absent means UNCHANGED on the node, so a plain display-name edit from an
+    // ordinary client never clobbers a bot's descriptor.
+    bot: data.bot == null ? null : botDescriptorPayload(data.bot),
   };
 }
 

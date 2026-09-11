@@ -24,6 +24,88 @@ export interface UserSearchHit {
   avatar_cid: string | null;
   /** `true` when the user is on-chain registered (`registered_at > 0`). */
   verified: boolean;
+  /**
+   * `true` when the wallet has self-declared itself automated (protocol §3.11).
+   *
+   * Orthogonal to `verified` and must never be merged into one badge:
+   * `verified` means "paid to register on-chain" and is a trust signal;
+   * `is_bot` is free, self-declared and purely informational. Render the Bot
+   * badge for EVERY self-declared bot, verified or not — an unverified bot is
+   * precisely the one a user most needs labelled.
+   */
+  is_bot: boolean;
+  /** The bot's self-declared `@handle`, or `null`. Not unique, not identity. */
+  bot_handle: string | null;
+}
+
+// --- Bot self-declaration (protocol §3.11) ---
+
+/** Hard caps the node enforces on a bot descriptor. Validate before signing. */
+export const BOT_LIMITS = {
+  MAX_COMMANDS: 32,
+  MAX_COMMAND_NAME: 32,
+  MAX_COMMAND_DESCRIPTION: 128,
+  MAX_ARGS_HINT: 64,
+  MIN_HANDLE: 3,
+  MAX_HANDLE: 32,
+} as const;
+
+/** One advertised bot command. */
+export interface BotCommand {
+  /**
+   * Lowercase on the wire (`^[a-z0-9_]+$`), no leading `/`.
+   *
+   * Consumers match case-INSENSITIVELY — mobile keyboards autocapitalise the
+   * first character of an empty composer, so `/C KLV` is what a user actually
+   * types.
+   */
+  name: string;
+  /**
+   * Human-readable. Full Unicode: CJK, Cyrillic, emoji (including ZWJ
+   * sequences) and Persian/Indic text all render. Only control and
+   * bidirectional codepoints are rejected — this is not an ASCII allowlist.
+   */
+  description: string;
+  /** e.g. `"<symbol> [days]"`. */
+  args_hint?: string | null;
+}
+
+/** A wallet's self-declared bot identity. */
+export interface BotDescriptor {
+  /** `false` CLEARS the stored handle and command list. */
+  is_bot: boolean;
+  /**
+   * Display convenience for `/cmd@handle` disambiguation. ASCII-only
+   * (`^[A-Za-z0-9_]+$`), NOT unique, NOT enforced, NOT identity — the wallet
+   * address is identity.
+   */
+  handle?: string | null;
+  /**
+   * `undefined`/`null` leaves the stored list UNCHANGED; `[]` clears it. These
+   * are different requests and must not be collapsed.
+   */
+  commands?: BotCommand[] | null;
+}
+
+/** One bot in a channel, as returned by `getChannelBots`. */
+export interface ChannelBot {
+  address: string;
+  display_name: string | null;
+  avatar_cid: string | null;
+  verified: boolean;
+  bot_handle: string | null;
+  commands: BotCommand[];
+}
+
+/** GET /api/v1/channels/:channelId/bots */
+export interface ChannelBotsResponse {
+  bots: ChannelBot[];
+  /** Number of entries in THIS response — not a channel-wide bot count. */
+  total: number;
+  /** The node stopped scanning members early; the list may be incomplete. */
+  scan_capped: boolean;
+  /** More bots qualified than the node returns in one response. */
+  result_capped: boolean;
 }
 
 /** Response shape for `GET /api/v1/users/search`. */
@@ -530,6 +612,12 @@ export type WsEvent =
   // `GET /api/v1/settings` and re-apply your synced objects (channelOrg,
   // hiddenDms, topicGroups) under their last-writer-wins merge.
   | { type: 'settings_changed' }
+  // A bot's self-declared command list changed (l2-node 0.127.0+). Payload is
+  // just the wallet — it is a nudge. Re-fetch
+  // `GET /api/v1/channels/{id}/bots` for any channel you currently have open
+  // and refresh the `/`-autocomplete. The node suppresses this when the
+  // descriptor did not actually change, so a bot restarting does not emit one.
+  | { type: 'bot_commands_changed'; address: string }
   | { type: 'error'; code: number; message: string };
 
 /** SDK client configuration. */
@@ -697,6 +785,14 @@ export interface ProfileUpdateData {
   display_name?: string;
   avatar_cid?: string;
   bio?: string;
+  /**
+   * Self-declared bot identity (protocol §3.11).
+   *
+   * Omitting it means UNCHANGED — never "clear" — so an ordinary display-name
+   * edit cannot wipe a bot's command list. Clear explicitly with
+   * `is_bot: false`.
+   */
+  bot?: BotDescriptor;
 }
 
 /** DM conversations list response. */

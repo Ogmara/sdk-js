@@ -5,6 +5,77 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.0] - 2026-09-11
+
+### Added
+
+- **Bot self-declaration and the `/`-command picker's client API**
+  (protocol §3.11, L2 spec §4.1/§4.3). Requires l2-node 0.127.0.
+  - `ProfileUpdateData.bot` carries a `BotDescriptor { is_bot, handle,
+    commands }`. **Omitting it means UNCHANGED, never "clear"** — so an
+    ordinary display-name edit cannot wipe a bot's command list. Clear
+    explicitly with `clearBotIdentity()`. Likewise `commands: undefined` leaves
+    the stored list alone while `commands: []` clears it; these are different
+    requests and the SDK does not collapse them.
+  - `client.setBotCommands({ handle?, commands })` and
+    `client.clearBotIdentity()`. Caps are validated locally **before signing**
+    (`validateBotDescriptor`, also exported), so a bad descriptor throws a
+    useful error instead of coming back as an opaque node rejection.
+  - `client.getChannelBots(channelId)` → `ChannelBotsResponse`. Check
+    `scan_capped` and `result_capped`: the node bounds both the member scan and
+    the response, and a capped list is not the whole picture.
+  - `parseCommand(message, myAddress, myHandle?)` — the bot author's half of the
+    contract. Handles `/name` and `/name@handle`, splits arguments, and answers
+    "is this for me".
+  - `UserSearchHit` gains `is_bot` and `bot_handle`, so the `@`-mention popover
+    can render the Bot badge. That response is an explicit field list on the
+    node, not a passthrough.
+  - New WS event `bot_commands_changed` on the `WsEvent` union.
+  - `BOT_LIMITS` exports the node's caps for consumers that want to validate or
+    display them.
+
+### Notes for bot authors
+
+- **Call `setBotCommands()` unconditionally on every start, and do not track
+  what you last published.** That local state desyncs from what a node actually
+  holds — after a node wipe, on a fresh node, or on a dropped gossip message —
+  and leaves your commands invisible because your bot believes it already
+  advertised them. The node compares content and suppresses its broadcast when
+  nothing changed, so republishing costs nothing.
+- **`parseCommand` lowercases the command token only, never the arguments.**
+  `/c KLV` yields `args: ["KLV"]`. Mobile keyboards autocapitalise the first
+  character of an empty composer, so `/C KLV` must resolve to `c` — but
+  lowercasing the whole message turns the ticker into `klv` and sends the bot
+  looking up a different asset.
+- **A bare `/foo` with no `@handle` and no mentions is `addressed: true` for
+  EVERY bot in the channel** — none of them can tell it was meant for another.
+  Fall through silently on a command you do not implement; replying "unknown
+  command" makes a three-bot channel answer every typo three times.
+- **Per-invoker rate limiting is your job.** Because a command is an ordinary
+  chat message and indistinguishable from chat on the wire, a node cannot
+  identify or throttle command traffic. That is also the right place for it —
+  only your bot knows what a given command costs it to answer. Key a bucket on
+  the wallet address, weight per command, and reply "slow down" at most once per
+  user per cooldown, or your limiter becomes an amplifier using your own wallet.
+- **A bot in a private channel can read everything in it.** Private channels are
+  force-encrypted with a symmetric epoch key, so there is no key that opens one
+  message and not the rest. Clients disclose this at invite time.
+
+### Security
+
+- **`vitest` 3 → 5**, clearing two moderate advisories in `@vitest/mocker`.
+  **Dev/test tooling only — not shipped code**; `dist/` is unaffected. Verified
+  rather than assumed: all 153 tests pass on vitest 5 and both the CJS/ESM and
+  DTS builds succeed, and `npm audit` now reports 0 vulnerabilities.
+
+### Deferred
+
+- **SDK-level node failover on HTTP 429** (retry the byte-identical signed
+  envelope against another node from `getActiveNodes`, then return after a
+  cooldown) is specified but **not implemented here**. It benefits every client
+  rather than just bots, does not block the command picker, and is cleaner as
+  its own release — tracked separately rather than bundled into this one.
+
 ## [0.56.0] - 2026-09-05
 
 ### Security

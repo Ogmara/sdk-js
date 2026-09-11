@@ -34,7 +34,10 @@ export interface UserSearchHit {
    * precisely the one a user most needs labelled.
    */
   is_bot: boolean;
-  /** The bot's self-declared `@handle`, or `null`. Not unique, not identity. */
+  /**
+   * The bot's self-declared `@handle`, or `null`. Not unique, not identity.
+   * **Untrusted — render as plain text.**
+   */
   bot_handle: string | null;
 }
 
@@ -64,9 +67,21 @@ export interface BotCommand {
    * Human-readable. Full Unicode: CJK, Cyrillic, emoji (including ZWJ
    * sequences) and Persian/Indic text all render. Only control and
    * bidirectional codepoints are rejected — this is not an ASCII allowlist.
+   *
+   * **UNTRUSTED — render as plain text, never as HTML or markdown.** This is
+   * self-declared by an arbitrary wallet and gossiped network-wide. The node
+   * rejects only *invisible and text-reordering* codepoints; it does NOT strip
+   * `<`, `>`, `&`, quotes or markdown syntax, so `<img src=x onerror=…>` passes
+   * validation cleanly. It then lands in a list your users are about to click.
+   *
+   * Length is capped in **UTF-8 bytes**, not characters — a CJK character costs
+   * three.
    */
   description: string;
-  /** e.g. `"<symbol> [days]"`. */
+  /**
+   * e.g. `"<symbol> [days]"`. Same rules as `description`: **untrusted, render
+   * as plain text**, capped in UTF-8 bytes.
+   */
   args_hint?: string | null;
 }
 
@@ -77,7 +92,11 @@ export interface BotDescriptor {
   /**
    * Display convenience for `/cmd@handle` disambiguation. ASCII-only
    * (`^[A-Za-z0-9_]+$`), NOT unique, NOT enforced, NOT identity — the wallet
-   * address is identity.
+   * address is identity. **Untrusted — render as plain text.**
+   *
+   * Unlike `commands`, `null` and `undefined` both mean **UNCHANGED**. There is
+   * no way to clear only the handle: the node inserts it when present and has no
+   * clear branch. Use `clearBotIdentity()` to reset the whole descriptor.
    */
   handle?: string | null;
   /**

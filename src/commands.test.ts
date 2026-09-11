@@ -76,6 +76,32 @@ describe('parseCommand', () => {
     expect(p?.handle).toBeNull();
   });
 
+  it('a handle naming another bot beats mentions[] (0.57.1 regression)', () => {
+    // SHIPPED BROKEN IN 0.57.0: `mentionedMe` short-circuited ahead of the
+    // handle check, so a message explicitly addressed to another bot still made
+    // this one answer if its address appeared in mentions[]. mentions[] is
+    // plaintext and set by the sender — so one crafted message naming bot B by
+    // handle while listing every bot's address made ALL of them reply, each
+    // spending its own wallet and rate budget.
+    const p = parseCommand(
+      { content: '/c@otherbot KLV', mentions: [ME, 'klv1otherbot'] },
+      ME,
+      'mybothandle',
+    );
+    expect(p?.handle).toBe('otherbot');
+    expect(p?.addressed).toBe(false);
+  });
+
+  it('my own handle still wins even when someone else is mentioned', () => {
+    const p = parseCommand({ content: '/c@mine KLV', mentions: [OTHER] }, ME, 'MINE');
+    expect(p?.addressed).toBe(true);
+  });
+
+  it('rejects a handle containing @ rather than parsing it oddly', () => {
+    expect(parseCommand({ content: '/a@@b' }, ME)).toBeNull();
+    expect(parseCommand({ content: '/a@b@c' }, ME)).toBeNull();
+  });
+
   it('handles a command with no arguments', () => {
     const p = parseCommand({ content: '/about' }, ME);
     expect(p?.name).toBe('about');

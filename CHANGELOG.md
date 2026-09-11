@@ -5,6 +5,56 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.57.1] - 2026-09-11
+
+Fixes three defects in 0.57.0, found by the code and security audits that should
+have run **before** that release was tagged. 0.57.0 is published and cannot be
+withdrawn; anyone on it should upgrade.
+
+### Fixed
+
+- **CRITICAL — `setBotCommands()` could silently CLEAR a bot's identity instead
+  of setting it.** The implementation was `{ is_bot: true, ...descriptor }` —
+  the spread came last, so a caller-supplied `is_bot` won. `is_bot: false` is the
+  explicit clear-everything branch on the node, so a bot that keeps one config
+  object around and passes it to the method literally named *set commands* had
+  its handle and command list wiped. `Omit<BotDescriptor, 'is_bot'>` provided no
+  protection: TypeScript's excess-property check fires only on fresh object
+  literals, never on a variable, so this type-checked cleanly under `--strict`.
+  Fields are now picked explicitly rather than spread.
+- **A bot could answer a message explicitly addressed to a different bot.**
+  `addressed` was `mentionedMe || handleIsMine || (unaddressed && !namesAnotherBot)`,
+  so `mentionedMe` short-circuited ahead of the handle check and the
+  "names another bot" guard only ever gated the fallback arm. Since `mentions[]`
+  is plaintext and set by whoever sent the message — not only by the picker — a
+  crafted message could name one bot by `@handle` while listing every bot's
+  address, and all of them would reply, each spending its own wallet and rate
+  budget. A handle naming another bot is now decisive over `mentions[]` too.
+- **Descriptor caps were measured in UTF-16 code units, not UTF-8 bytes.** The
+  node's caps are byte counts, so `'描'.repeat(128)` measured 128 locally and
+  **384 bytes** at the node: local validation passed and the node then rejected
+  it. That undercut the stated purpose of validating before signing, for exactly
+  the CJK, Cyrillic and emoji authors the "this is not an ASCII allowlist" rule
+  exists to protect. `validateBotDescriptor` now measures UTF-8 bytes and also
+  mirrors the node's control- and bidi-codepoint rejection (which it previously
+  did not check at all), while still permitting `U+200C` ZWNJ and `U+200D` ZWJ.
+- `parseCommand`'s handle capture now excludes `@`, so `/a@@b` and `/a@b@c` fail
+  to parse instead of yielding a handle containing `@`.
+
+### Changed
+
+- **`BotCommand.description`, `args_hint`, `BotDescriptor.handle` and
+  `bot_handle` are now documented as UNTRUSTED — render as plain text, never as
+  HTML or markdown.** The previous wording ("only control and bidirectional
+  codepoints are rejected") read as an implicit safety claim. The node's filter
+  blocks *invisible and text-reordering* codepoints; it does not strip `<`, `>`,
+  `&`, quotes or markdown, so `<img src=x onerror=…>` passes validation cleanly
+  and then lands in a list users are about to click. The SDK itself has no such
+  sink, but this package has external consumers who read these doc comments.
+- `BotDescriptor.handle` now documents that `null` and `undefined` both mean
+  UNCHANGED — unlike `commands`, there is no way to clear only the handle
+  (the node has no clear branch for it). Use `clearBotIdentity()`.
+
 ## [0.57.0] - 2026-09-11
 
 ### Added

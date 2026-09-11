@@ -940,7 +940,19 @@ export class OgmaraClient {
    * rather than coming back as an opaque rejection.
    */
   async setBotCommands(descriptor: Omit<BotDescriptor, 'is_bot'>): Promise<void> {
-    await this.updateProfile({ bot: { is_bot: true, ...descriptor } });
+    // Pick fields explicitly rather than spreading.
+    //
+    // `Omit<BotDescriptor, 'is_bot'>` is COMPILE-TIME ONLY: TypeScript's
+    // excess-property check fires on fresh object literals, not on a variable,
+    // so `setBotCommands(someDescriptor)` type-checks even when that object
+    // carries `is_bot`. The previous form was `{ is_bot: true, ...descriptor }`,
+    // where the spread came last and the caller's value won — and on the node
+    // `is_bot: false` is the explicit CLEAR branch. So a bot keeping one config
+    // object around and calling the method literally named "set commands" could
+    // wipe its own handle and command list. Fixed in 0.57.1.
+    await this.updateProfile({
+      bot: { is_bot: true, handle: descriptor.handle, commands: descriptor.commands },
+    });
   }
 
   /**

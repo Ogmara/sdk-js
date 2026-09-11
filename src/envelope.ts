@@ -156,9 +156,34 @@ function newsCommentPayload(data: NewsCommentData): Record<string, unknown> {
  * Deliberately mirrors `l2-node/src/messages/validation.rs`; if the caps ever
  * diverge, the node is authoritative.
  */
+/**
+ * UTF-8 byte length — what the node actually measures.
+ *
+ * The node's caps are byte counts (`String::len()` in Rust). A JS `.length` is
+ * UTF-16 code units, so `'描'.repeat(128)` is 128 by `.length` but **384 bytes**.
+ * Validating with `.length` therefore passed CJK, Cyrillic and emoji
+ * descriptions that the node then rejected — undercutting the whole point of a
+ * local check for precisely the non-ASCII authors the "not an ASCII allowlist"
+ * rule exists to protect. Fixed in 0.57.1.
+ */
+function utf8Len(s: string): number {
+  return new TextEncoder().encode(s).length;
+}
+
+/**
+ * Mirror of the node's control- and bidi-codepoint rejection.
+ *
+ * `U+200C` ZWNJ and `U+200D` ZWJ are deliberately PERMITTED despite sitting
+ * inside the `U+200B`–`U+200F` block a naive range would sweep up: ZWJ is
+ * required for emoji sequences and ZWNJ for correct Persian and Indic
+ * orthography, and neither can reorder surrounding text.
+ */
+const FORBIDDEN_DESCRIPTOR_CHARS =
+  /[\u0000-\u001F\u007F-\u009F\u061C\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB]|[\u{E0000}-\u{E007F}]/u;
+
 export function validateBotDescriptor(bot: BotDescriptor): void {
   if (bot.handle != null) {
-    if (bot.handle.length < BOT_LIMITS.MIN_HANDLE || bot.handle.length > BOT_LIMITS.MAX_HANDLE) {
+    if (utf8Len(bot.handle) < BOT_LIMITS.MIN_HANDLE || utf8Len(bot.handle) > BOT_LIMITS.MAX_HANDLE) {
       throw new Error(
         `bot handle must be ${BOT_LIMITS.MIN_HANDLE}-${BOT_LIMITS.MAX_HANDLE} characters`,
       );
@@ -172,7 +197,7 @@ export function validateBotDescriptor(bot: BotDescriptor): void {
     throw new Error(`too many bot commands (max ${BOT_LIMITS.MAX_COMMANDS})`);
   }
   for (const cmd of bot.commands) {
-    if (!cmd.name || cmd.name.length > BOT_LIMITS.MAX_COMMAND_NAME) {
+    if (!cmd.name || utf8Len(cmd.name) > BOT_LIMITS.MAX_COMMAND_NAME) {
       throw new Error(`bot command name must be 1-${BOT_LIMITS.MAX_COMMAND_NAME} characters`);
     }
     // Lowercase on the wire. Consumers match case-insensitively, but declaring
@@ -182,13 +207,26 @@ export function validateBotDescriptor(bot: BotDescriptor): void {
         `bot command name "${cmd.name}" must match ^[a-z0-9_]+$ (lowercase, no leading "/")`,
       );
     }
-    if (!cmd.description || cmd.description.length > BOT_LIMITS.MAX_COMMAND_DESCRIPTION) {
+    if (!cmd.description || utf8Len(cmd.description) > BOT_LIMITS.MAX_COMMAND_DESCRIPTION) {
       throw new Error(
-        `bot command description must be 1-${BOT_LIMITS.MAX_COMMAND_DESCRIPTION} characters`,
+        `bot command description must be 1-${BOT_LIMITS.MAX_COMMAND_DESCRIPTION} UTF-8 bytes ` +
+          `(non-ASCII text costs more than one byte per character)`,
       );
     }
-    if (cmd.args_hint != null && cmd.args_hint.length > BOT_LIMITS.MAX_ARGS_HINT) {
-      throw new Error(`bot command args_hint must be at most ${BOT_LIMITS.MAX_ARGS_HINT} characters`);
+    if (FORBIDDEN_DESCRIPTOR_CHARS.test(cmd.description)) {
+      throw new Error(
+        `bot command description contains a control or bidirectional codepoint`,
+      );
+    }
+    if (cmd.args_hint != null) {
+      if (utf8Len(cmd.args_hint) > BOT_LIMITS.MAX_ARGS_HINT) {
+        throw new Error(
+          `bot command args_hint must be at most ${BOT_LIMITS.MAX_ARGS_HINT} UTF-8 bytes`,
+        );
+      }
+      if (FORBIDDEN_DESCRIPTOR_CHARS.test(cmd.args_hint)) {
+        throw new Error(`bot command args_hint contains a control or bidirectional codepoint`);
+      }
     }
   }
 }

@@ -59,11 +59,17 @@ export interface ParsedCommand {
  *
  * Returns `null` when the message is not a command at all.
  *
- * `addressed` is true when any of these hold:
- *  - the envelope's `mentions[]` contains `myAddress` (the picker sets this
- *    whenever two or more bots in the channel expose the same command name), or
- *  - the typed `@handle` matches `myHandle` (case-insensitively), or
- *  - the user typed no `@handle` AND the message mentions no one.
+ * `addressed` is true when:
+ *  - the typed `@handle` matches `myHandle` (case-insensitively) — this wins
+ *    outright; or
+ *  - NO `@handle` named a different bot, AND either `mentions[]` contains
+ *    `myAddress` or the message named nobody at all.
+ *
+ * A handle naming another bot is decisive over `mentions[]` too, not just over
+ * the fallback. `mentions[]` is plaintext and set by whoever sent the message,
+ * so otherwise a crafted message could name one bot by handle while listing
+ * every bot's address, and all of them would answer — each reply spending that
+ * bot's own wallet and rate budget.
  *
  * **That last arm means a bare `/foo` is addressed to EVERY bot in the channel**
  * — none of them can tell it was meant for another. So a bot MUST fall through
@@ -80,7 +86,9 @@ export function parseCommand(
 
   // A command token is the first whitespace-delimited word. Everything after it
   // is arguments and is left alone.
-  const match = /^\/([^\s@]+)(?:@([^\s]+))?(?:\s+([\s\S]*))?$/.exec(content);
+  // Both the name and handle captures exclude `@`, so `/a@@b` and `/a@b@c` fail
+  // to parse rather than yielding a handle that contains `@`.
+  const match = /^\/([^\s@]+)(?:@([^\s@]+))?(?:\s+([\s\S]*))?$/.exec(content);
   if (!match) return null;
 
   const [, rawName, rawHandle, rest = ''] = match;
@@ -111,7 +119,13 @@ export function parseCommand(
     name,
     args: rest.length > 0 ? rest.trim().split(/\s+/).filter(Boolean) : [],
     handle,
-    addressed: mentionedMe || handleIsMine || (unaddressed && !namesAnotherBot),
+    // A handle naming another bot is decisive over EVERYTHING, including
+    // `mentions[]`. `mentions[]` is plaintext and is set by whoever sent the
+    // message — not only by the picker — so without this gate a crafted message
+    // could name one bot by handle while listing every bot's address, and all of
+    // them would answer. Each spurious reply spends the other bots' own wallets
+    // and rate budgets. Fixed in 0.57.1.
+    addressed: handleIsMine || (!namesAnotherBot && (mentionedMe || unaddressed)),
     rest,
   };
 }

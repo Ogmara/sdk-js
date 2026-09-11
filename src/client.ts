@@ -950,6 +950,12 @@ export class OgmaraClient {
     // `is_bot: false` is the explicit CLEAR branch. So a bot keeping one config
     // object around and calling the method literally named "set commands" could
     // wipe its own handle and command list. Fixed in 0.57.1.
+    //
+    // KEEP THIS FIELD LIST IN SYNC WITH `BotDescriptor`. Explicit picking is the
+    // opposite failure mode of the spread it replaced: a spread forwards a field
+    // the caller should not control, an explicit pick silently drops a field they
+    // should. Today the type is exactly {is_bot, handle, commands}; if it grows,
+    // add the field here too.
     await this.updateProfile({
       bot: { is_bot: true, handle: descriptor.handle, commands: descriptor.commands },
     });

@@ -828,9 +828,15 @@ export interface DmMessagesResponse {
 
 /** Notification from the L2 node. */
 export interface Notification {
-  type: 'mention' | 'dm' | 'follow' | 'reply';
+  type: 'mention' | 'dm' | 'follow' | 'reply' | 'channel_invite';
   msg_id?: string;
   channel_id?: string;
+  /**
+   * Display name of the channel, present on `channel_invite` (l2-node
+   * 0.128.0+) so a consumer can log/show which channel without a second
+   * fetch. Not populated on other notification types today.
+   */
+  channel_name?: string;
   from: string;
   timestamp: number;
   preview?: string;

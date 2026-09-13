@@ -5,6 +5,16 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.58.0] - 2026-09-13
+
+### Added
+
+- **`Notification.type` gains `'channel_invite'`** (l2-node 0.128.0+), and a
+  new optional `channel_name` field. Fires when someone invites your wallet
+  to a channel — `GET /api/v1/notifications` now surfaces it, so a bot (or
+  any client) can discover and act on an invite it received while offline,
+  not just one it happened to be connected for.
+
 ## [0.57.1] - 2026-09-11
 
 Fixes three defects in 0.57.0, found by the code and security audits that should

@@ -5,6 +5,19 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.59.0] - 2026-09-13
+
+### Added
+
+- **`getNotifications` gains an optional `type` filter** (l2-node 0.128.0+).
+  Found needed while building ogmara-bot's auto-join poller: `getNotifications`
+  mixes every notification type into one page, so a low-volume type (a
+  `channel_invite`) can be silently pushed out of the page by a high-volume
+  one (a `mention` fires on every command invocation, for an answering bot).
+  Passing `type` has the node widen its own internal scan instead of the
+  caller's page size, so the type you actually asked for isn't starved out
+  by one you didn't.
+
 ## [0.58.0] - 2026-09-13
 
 ### Added

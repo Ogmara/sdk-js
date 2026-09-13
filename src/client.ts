@@ -86,6 +86,7 @@ import type {
   Attachment,
   DmConversationsResponse,
   DmMessagesResponse,
+  Notification,
   NotificationsResponse,
   ChannelCreateResponse,
   UserProfileResponse,
@@ -1001,11 +1002,27 @@ export class OgmaraClient {
     return this.getAuthenticated('/api/v1/dm/unread');
   }
 
-  /** GET /api/v1/notifications — fetch notifications for the authenticated user. */
-  async getNotifications(since?: number, limit = 50): Promise<NotificationsResponse> {
+  /**
+   * GET /api/v1/notifications — fetch notifications for the authenticated user.
+   *
+   * `type` (l2-node 0.128.0+) filters to one notification type. Without it,
+   * every type shares the same `limit`-sized page, newest first — for a
+   * consumer that only cares about one rare type (e.g. `channel_invite`) on
+   * a wallet where another type is frequent (a mention fires on every
+   * command invocation for an answering bot), the rare type can be silently
+   * pushed out of an untyped page. Passing `type` has the node widen its own
+   * internal scan instead, so the type you asked for isn't starved out by
+   * one you didn't.
+   */
+  async getNotifications(
+    since?: number,
+    limit = 50,
+    type?: Notification['type'],
+  ): Promise<NotificationsResponse> {
     if (!this.signer) throw new Error('Signer required');
     let path = `/api/v1/notifications?limit=${limit}`;
     if (since !== undefined) path += `&since=${since}`;
+    if (type !== undefined) path += `&type=${encodeURIComponent(type)}`;
     return this.getAuthenticated(path);
   }
 

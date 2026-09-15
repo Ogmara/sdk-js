@@ -5,6 +5,21 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.1] - 2026-09-15
+
+### Fixed
+
+- **`Notification.channel_name`/`anchor_node` widened to `string | null`
+  (was `string | undefined`) — the type was actively misleading.** l2-node's
+  notification JSON splices `Option<String>` straight into
+  `serde_json::json!`, which serializes an absent value as JSON `null`, not
+  an omitted key. A consumer checking only `!== undefined` (the reasonable
+  reading of the old type) lets a real wire `null` straight through — this
+  caused a live crash in ogmara-bot 0.29.0 (`forLog(null)` throwing) for
+  exactly the case `anchor_node` exists to handle: a channel the receiving
+  node has no local record for yet. Fixed the type here so it matches what
+  actually arrives; see ogmara-bot 0.29.1 for the consumer-side fix.
+
 ## [0.60.0] - 2026-09-15
 
 ### Added

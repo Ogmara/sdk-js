@@ -835,8 +835,17 @@ export interface Notification {
    * Display name of the channel, present on `channel_invite` (l2-node
    * 0.128.0+) so a consumer can log/show which channel without a second
    * fetch. Not populated on other notification types today.
+   *
+   * Typed `| null` alongside `?:` because the node's notification JSON
+   * splices an `Option<String>` straight into `serde_json::json!`, which
+   * serializes `None` as JSON `null` rather than omitting the key — a
+   * consumer checking only `!== undefined` will let a real wire `null`
+   * through. This is the NORMAL case, not an edge case, whenever the
+   * channel is one the node has no local record for (e.g. the invitee's own
+   * node hasn't federated it yet — exactly the case `anchor_node` below
+   * exists to resolve).
    */
-  channel_name?: string;
+  channel_name?: string | null;
   /**
    * Host node API endpoint for the invited channel, present on
    * `channel_invite` when the inviter's client set it (l2-node 0.130.0+,
@@ -844,8 +853,9 @@ export interface Notification {
    * so a consumer whose own node has never heard of it can pass this
    * straight to `federateChannel` before joining. Absent when the inviter's
    * own node URL wasn't a public `https://` address, or on older nodes.
+   * Also typed `| null` for the same reason as `channel_name` above.
    */
-  anchor_node?: string;
+  anchor_node?: string | null;
   from: string;
   timestamp: number;
   preview?: string;

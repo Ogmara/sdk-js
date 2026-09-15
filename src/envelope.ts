@@ -420,8 +420,12 @@ function pinPayload(channelId: number, msgId: string): Record<string, unknown> {
   return { channel_id: channelId, msg_id: hexToBytes(msgId) };
 }
 
-function invitePayload(channelId: number, targetUser: string): Record<string, unknown> {
-  return { channel_id: channelId, target_user: targetUser };
+function invitePayload(
+  channelId: number,
+  targetUser: string,
+  anchorNode?: string,
+): Record<string, unknown> {
+  return { channel_id: channelId, target_user: targetUser, anchor_node: anchorNode ?? null };
 }
 
 // --- Core envelope builder ---
@@ -584,8 +588,13 @@ export async function buildUnpin(signer: WalletSigner, channelId: number, msgId:
   return buildEnvelope(signer, MessageType.ChannelUnpinMessage, pinPayload(channelId, msgId));
 }
 
-export async function buildInvite(signer: WalletSigner, channelId: number, target: string): Promise<Uint8Array> {
-  return buildEnvelope(signer, MessageType.ChannelInvite, invitePayload(channelId, target));
+export async function buildInvite(
+  signer: WalletSigner,
+  channelId: number,
+  target: string,
+  anchorNode?: string,
+): Promise<Uint8Array> {
+  return buildEnvelope(signer, MessageType.ChannelInvite, invitePayload(channelId, target, anchorNode));
 }
 
 export async function buildChannelCreate(signer: WalletSigner, data: ChannelCreateData): Promise<Uint8Array> {

@@ -1209,10 +1209,24 @@ export class OgmaraClient {
     await this.deleteEnvelope(`/api/v1/channels/${channelId}/pin/${encodeURIComponent(msgId)}`, envelope);
   }
 
-  /** POST /api/v1/channels/:channelId/invite/:address — invite user to private channel. */
+  /**
+   * POST /api/v1/channels/:channelId/invite/:address — invite user to private channel.
+   *
+   * Carries this node's URL as `anchor_node` so the invitee's own home node
+   * — which may never have heard of this channel, since private channels are
+   * host-node-scoped — can `federateChannel` before the invitee tries to
+   * join (cross-node invite delivery fix, l2-node §2.4/§8.1.1-adjacent).
+   * Only sent when `this.nodeUrl` is `https://`: the receiving node's
+   * `federate_channel` SSRF guard requires https and a publicly-routable
+   * host, so a local/dev `http://localhost:…` node would only ever produce
+   * an unusable value — omitting it there is exactly today's behavior
+   * (invite still works, just without auto-federate) rather than a new
+   * failure mode.
+   */
   async inviteUser(channelId: number, address: string): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildInvite(this.signer, channelId, address);
+    const anchorNode = this.nodeUrl.startsWith('https://') ? this.nodeUrl : undefined;
+    const envelope = await buildInvite(this.signer, channelId, address, anchorNode);
     await this.postEnvelope(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, envelope);
   }
 

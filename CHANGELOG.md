@@ -5,6 +5,23 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.60.0] - 2026-09-15
+
+### Added
+
+- **`inviteUser`/`buildInvite` now populate `ChannelInvitePayload.anchor_node`**
+  with this client's own node URL (l2-node 0.130.0+, cross-node
+  private-channel invite delivery) — only when it's a public `https://`
+  address, since the receiving node's `federate_channel` SSRF guard requires
+  one; a local/dev node (e.g. `http://localhost:41721`) omits it, matching
+  today's behavior rather than sending an unusable value.
+- **`Notification.anchor_node`** (`channel_invite` only) — the host node
+  API endpoint for the invited channel, present when the inviter's client
+  set it. Private channels are host-node-scoped, so this is what lets a
+  consumer whose own node has never heard of the channel `federateChannel`
+  it before joining, rather than only working when a clicked invite link
+  named the host.
+
 ## [0.59.0] - 2026-09-13
 
 ### Added

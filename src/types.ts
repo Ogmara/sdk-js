@@ -837,6 +837,15 @@ export interface Notification {
    * fetch. Not populated on other notification types today.
    */
   channel_name?: string;
+  /**
+   * Host node API endpoint for the invited channel, present on
+   * `channel_invite` when the inviter's client set it (l2-node 0.130.0+,
+   * cross-node invite delivery fix) — a private channel is host-node-scoped,
+   * so a consumer whose own node has never heard of it can pass this
+   * straight to `federateChannel` before joining. Absent when the inviter's
+   * own node URL wasn't a public `https://` address, or on older nodes.
+   */
+  anchor_node?: string;
   from: string;
   timestamp: number;
   preview?: string;

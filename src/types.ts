@@ -269,6 +269,48 @@ export interface Attachment {
 /** Voluntary content rating. */
 export type ContentRating = 'general' | 'teen' | 'mature' | 'explicit';
 
+// --- Message buttons (protocol §3.3, l2-node 0.131+) ---
+
+/** Hard caps the node enforces on a message's buttons. Validate before signing. */
+export const BUTTON_LIMITS = {
+  MAX_ROWS: 10,
+  MAX_PER_ROW: 8,
+  /** Across ALL rows combined — the binding constraint, not MAX_ROWS * MAX_PER_ROW. */
+  MAX_TOTAL: 40,
+  MAX_LABEL: 24,
+  MAX_COMMAND: 256,
+} as const;
+
+/** One interactive button attached to a message. */
+export interface MessageButton {
+  /**
+   * Human-readable. Full Unicode (control/bidi codepoints rejected, not an
+   * ASCII allowlist), capped in UTF-8 bytes. **Untrusted — render as plain
+   * text**, same as `BotCommand.description`.
+   */
+  label: string;
+  /**
+   * Sent VERBATIM as the pressed message's `content` — see `pressButton()`.
+   * Convention, not node-enforced: SHOULD start with `/` to be
+   * `parseCommand()`-compatible. **Untrusted — the node validates only
+   * length and charset, not shell/HTML safety.**
+   *
+   * **Independent of `label`, and signed under the PRESSER's wallet on tap
+   * with no confirmation.** A button reading "📈 Show chart" can carry
+   * `command: "/ban someone"` — the presser never sees `command` unless the
+   * UI they're using chooses to surface it. Any client rendering buttons
+   * should treat `command` as attacker-controlled content, not as something
+   * validated to match its `label`.
+   */
+  command: string;
+}
+
+/** A row of buttons rendered together under a message. */
+export interface ButtonRow {
+  /** <= `BUTTON_LIMITS.MAX_PER_ROW`. */
+  buttons: MessageButton[];
+}
+
 /** Chat message data for sending. */
 export interface ChatMessageData {
   channelId: number;
@@ -277,6 +319,15 @@ export interface ChatMessageData {
   replyTo?: string;
   mentions?: string[];
   attachments?: Attachment[];
+  /** <= `BUTTON_LIMITS.MAX_ROWS`. Validated before signing — see `validateButtons`. */
+  buttons?: ButtonRow[];
+  /**
+   * Set by `pressButton()` — marks this message as a button press so
+   * compliant clients suppress it from the default chat feed (protocol
+   * §3.3). Client-rendering hint ONLY, never a security boundary; ordinary
+   * callers of `sendMessage` should leave this unset.
+   */
+  viaButton?: boolean;
 }
 
 /** News post data for sending. */
@@ -1147,6 +1198,13 @@ export interface ChatEditData {
   channelId: number;
   msgId: string;   // hex msg_id of original message
   content: string; // new content
+  /**
+   * The button lifecycle mechanism (protocol §3.7): `undefined` leaves the
+   * stored button row UNCHANGED; `[]` explicitly CLEARS it; a non-empty array
+   * REPLACES it wholesale. This is how a bot disables/replaces buttons after
+   * use, or swaps in a sub-menu in place — there is no protocol-level expiry.
+   */
+  buttons?: ButtonRow[];
 }
 
 /** Chat message delete data. */

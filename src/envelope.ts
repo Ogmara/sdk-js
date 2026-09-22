@@ -20,8 +20,10 @@ import {
   MessageType,
   MSG_TYPE_NAME,
   BOT_LIMITS,
+  BUTTON_LIMITS,
   type BotDescriptor,
   type Attachment,
+  type ButtonRow,
   type ContentRating,
   type ChatMessageData,
   type NewsPostData,
@@ -116,6 +118,7 @@ function extractMentions(content: string): string[] {
 function chatMessagePayload(data: ChatMessageData): Record<string, unknown> {
   // Auto-extract @klv1... mentions from content if not explicitly provided
   const mentions = data.mentions ?? extractMentions(data.content);
+  if (data.buttons) validateButtons(data.buttons);
   return {
     channel_id: data.channelId,
     content: data.content,
@@ -123,6 +126,8 @@ function chatMessagePayload(data: ChatMessageData): Record<string, unknown> {
     reply_to: data.replyTo ? hexToBytes(data.replyTo) : null,
     mentions,
     attachments: (data.attachments ?? []).map(serializeAttachment),
+    buttons: (data.buttons ?? []).map(serializeButtonRow),
+    via_button: data.viaButton ?? false,
   };
 }
 
@@ -149,14 +154,6 @@ function newsCommentPayload(data: NewsCommentData): Record<string, unknown> {
 }
 
 /**
- * Validate a bot descriptor against the node's caps BEFORE signing.
- *
- * The node rejects the whole envelope on any violation, so catching it here
- * turns an opaque HTTP rejection into a useful local error for the bot author.
- * Deliberately mirrors `l2-node/src/messages/validation.rs`; if the caps ever
- * diverge, the node is authoritative.
- */
-/**
  * UTF-8 byte length — what the node actually measures.
  *
  * The node's caps are byte counts (`String::len()` in Rust). A JS `.length` is
@@ -181,6 +178,21 @@ function utf8Len(s: string): number {
 const FORBIDDEN_DESCRIPTOR_CHARS =
   /[\u0000-\u001F\u007F-\u009F\u061C\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB]|[\u{E0000}-\u{E007F}]/u;
 
+/**
+ * Validate a bot descriptor against the node's caps BEFORE signing.
+ *
+ * The node rejects the whole envelope on any violation, so catching it here
+ * turns an opaque HTTP rejection into a useful local error for the bot author.
+ * Deliberately mirrors `l2-node/src/messages/validation.rs`; if the caps ever
+ * diverge, the node is authoritative.
+ *
+ * **Pre-send convenience only, never a security boundary.** The node
+ * re-validates everything and is authoritative regardless of what this
+ * function decides. It also says nothing about content a *receiving* client
+ * should trust — it rejects invisible/reordering codepoints only, never
+ * `<`, `>`, `&`, quotes or markdown, so a receiving client must still render
+ * every field here as plain text (see each field's own doc comment).
+ */
 export function validateBotDescriptor(bot: BotDescriptor): void {
   if (bot.handle != null) {
     if (utf8Len(bot.handle) < BOT_LIMITS.MIN_HANDLE || utf8Len(bot.handle) > BOT_LIMITS.MAX_HANDLE) {
@@ -229,6 +241,61 @@ export function validateBotDescriptor(bot: BotDescriptor): void {
       }
     }
   }
+}
+
+/**
+ * Validate a message's button rows against the node's caps BEFORE signing.
+ *
+ * Same "catch it locally rather than let the node reject an opaque HTTP
+ * call" rationale as `validateBotDescriptor`. Mirrors
+ * `l2-node/src/messages/validation.rs::validate_buttons` — order matters:
+ * row count, then per-row count + per-field charset/length within the loop,
+ * then the cross-row total (the binding constraint, not `MAX_ROWS *
+ * MAX_PER_ROW`) after it, exactly as the node checks it.
+ *
+ * **Pre-send convenience only, never a security boundary** — same caveat as
+ * `validateBotDescriptor`. The node re-validates and is authoritative. This
+ * only rejects invisible/reordering codepoints, never `<`, `>`, `&`, quotes
+ * or markdown — a *receiving* client must still render `label`/`command` as
+ * plain text (see `MessageButton`'s field docs), and must not treat a
+ * button's `label` as a trustworthy description of what its `command`
+ * actually does.
+ */
+export function validateButtons(rows: ButtonRow[]): void {
+  if (rows.length > BUTTON_LIMITS.MAX_ROWS) {
+    throw new Error(`too many button rows (max ${BUTTON_LIMITS.MAX_ROWS})`);
+  }
+  let total = 0;
+  for (const row of rows) {
+    if (row.buttons.length === 0) {
+      throw new Error('button row must not be empty');
+    }
+    if (row.buttons.length > BUTTON_LIMITS.MAX_PER_ROW) {
+      throw new Error(`too many buttons in a row (max ${BUTTON_LIMITS.MAX_PER_ROW})`);
+    }
+    for (const button of row.buttons) {
+      total += 1;
+      if (!button.label || utf8Len(button.label) > BUTTON_LIMITS.MAX_LABEL) {
+        throw new Error(`button label must be 1-${BUTTON_LIMITS.MAX_LABEL} UTF-8 bytes`);
+      }
+      if (FORBIDDEN_DESCRIPTOR_CHARS.test(button.label)) {
+        throw new Error('button label contains a control or bidirectional codepoint');
+      }
+      if (!button.command || utf8Len(button.command) > BUTTON_LIMITS.MAX_COMMAND) {
+        throw new Error(`button command must be 1-${BUTTON_LIMITS.MAX_COMMAND} UTF-8 bytes`);
+      }
+      if (FORBIDDEN_DESCRIPTOR_CHARS.test(button.command)) {
+        throw new Error('button command contains a control or bidirectional codepoint');
+      }
+    }
+  }
+  if (total > BUTTON_LIMITS.MAX_TOTAL) {
+    throw new Error(`too many buttons (max ${BUTTON_LIMITS.MAX_TOTAL})`);
+  }
+}
+
+function serializeButtonRow(row: ButtonRow): Record<string, unknown> {
+  return { buttons: row.buttons.map((b) => ({ label: b.label, command: b.command })) };
 }
 
 function botDescriptorPayload(bot: BotDescriptor): Record<string, unknown> {
@@ -617,12 +684,21 @@ export async function buildChannelUnmute(signer: WalletSigner, data: ChannelUnmu
 // --- v0.11.0 message action builders ---
 
 function chatEditPayload(data: ChatEditData): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     target_id: hexToBytes(data.msgId),
     channel_id: data.channelId,
     content: data.content,
     edited_at: Date.now(),
   };
+  // `undefined` (key omitted) means UNCHANGED on the node (EditPayload.buttons
+  // is `Option<Vec<ButtonRow>>`, `#[serde(default)]`); `[]` explicitly CLEARS
+  // the row; a non-empty array REPLACES it wholesale. Do not collapse these —
+  // only set the key when the caller actually passed something.
+  if (data.buttons !== undefined) {
+    validateButtons(data.buttons);
+    payload.buttons = data.buttons.map(serializeButtonRow);
+  }
+  return payload;
 }
 
 function chatDeletePayload(data: ChatDeleteData): Record<string, unknown> {

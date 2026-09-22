@@ -97,7 +97,7 @@ export { solveChallenge, solveChallengeAsync } from './pow';
 // through silently on a command it does not implement.
 export { parseCommand } from './commands';
 export type { ParsedCommand, CommandMessage } from './commands';
-export { validateBotDescriptor } from './envelope';
+export { validateBotDescriptor, validateButtons } from './envelope';
 export type { PowChallenge, PowSolution, PowResult } from './pow';
 export { WsSubscription, subscribe } from './ws';
 export type { WsOptions } from './ws';

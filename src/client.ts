@@ -84,6 +84,7 @@ import type {
   ChatMessageData,
   NewsPostData,
   Attachment,
+  ButtonRow,
   DmConversationsResponse,
   DmMessagesResponse,
   Notification,
@@ -712,7 +713,13 @@ export class OgmaraClient {
   async sendMessage(
     channelId: number,
     content: string,
-    options?: { replyTo?: string; mentions?: string[]; attachments?: Attachment[] },
+    options?: {
+      replyTo?: string;
+      mentions?: string[];
+      attachments?: Attachment[];
+      /** <= `BUTTON_LIMITS.MAX_ROWS`. Validated locally before signing. */
+      buttons?: ButtonRow[];
+    },
   ): Promise<{ msg_id: string }> {
     if (!this.signer) throw new Error('Signer required for authenticated endpoints');
     const data: ChatMessageData = {
@@ -721,6 +728,59 @@ export class OgmaraClient {
       replyTo: options?.replyTo,
       mentions: options?.mentions,
       attachments: options?.attachments,
+      buttons: options?.buttons,
+    };
+    const envelope = await buildChatMessage(this.signer, data);
+    return this.postEnvelope('/api/v1/messages', envelope);
+  }
+
+  /**
+   * POST /api/v1/messages — press a button attached to another message.
+   *
+   * Sends an ORDINARY signed `ChatMessage` — deliberately not a new message
+   * type (protocol §3.3) — whose `content` is the button's literal `command`,
+   * `mentions` addresses the origin message's author, and `reply_to` points
+   * back at the origin message. Sets `via_button: true`, which compliant
+   * clients use to suppress this message from the default chat feed; it
+   * carries no server-side authority.
+   *
+   * **The caller MUST supply `origin` fresh from the message it is currently
+   * rendering, never a cached copy** — this is what stops a stale/deleted
+   * origin from producing an orphaned send (protocol §3.3).
+   *
+   * **`command` is attacker-controlled and is signed under the PRESSING
+   * user's own wallet, sight-unseen.** Any wallet may attach buttons
+   * (protocol §3.3 — not gated on `is_bot`), and a button's visible `label`
+   * and its actual `command` are independent strings: a button labelled
+   * "📈 Show chart" can carry `command: "/ban someone"`. There is no
+   * confirmation step — the call signs and sends immediately on the
+   * rendering client's say-so — so the UI that invokes this method is the
+   * only place a user ever has a chance to see what they're about to sign.
+   * **Callers building a button UI SHOULD surface the literal `command`**
+   * (e.g. a tooltip or long-press reveal), especially for messages from an
+   * author the user does not already trust — this is materially different
+   * from a typed command, which the sender authored and read themselves.
+   *
+   * **Plaintext only, like {@link OgmaraClient.sendMessage}.** In an
+   * `encryption_enabled` channel the node HARD-REJECTS a plaintext
+   * `ChatMessage` (`channel_encryption_required`) — this method always
+   * builds one, so pressing a button in a private/encrypted channel fails.
+   * For an encrypted channel, build the press manually with
+   * {@link buildEncryptedChannelMessage} (`text: command, replyTo:
+   * origin.msgId, mentions: [origin.author], viaButton: true`) and send it
+   * via {@link OgmaraClient.sendMessageEnvelope}.
+   */
+  async pressButton(
+    origin: { channelId: number; msgId: string; author: string },
+    command: string,
+  ): Promise<{ msg_id: string }> {
+    if (!this.signer) throw new Error('Signer required for authenticated endpoints');
+    const data: ChatMessageData = {
+      channelId: origin.channelId,
+      content: command,
+      mentions: [origin.author],
+      replyTo: origin.msgId,
+      viaButton: true,
     };
     const envelope = await buildChatMessage(this.signer, data);
     return this.postEnvelope('/api/v1/messages', envelope);
@@ -1232,10 +1292,28 @@ export class OgmaraClient {
 
   // --- v0.11.0 Message Actions ---
 
-  /** POST /api/v1/messages — edit a chat message (own, within 30 min). */
-  async editMessage(channelId: number, msgId: string, content: string): Promise<void> {
+  /**
+   * POST /api/v1/messages — edit a chat message (own, within 30 min).
+   *
+   * `options.buttons` is the button lifecycle mechanism (protocol §3.7):
+   * omit it to leave the button row unchanged, pass `[]` to clear it, or
+   * pass a new row to replace it wholesale — e.g. a bot swapping in a
+   * sub-menu in place, or disabling a row after it's been used. There is no
+   * protocol-level expiry.
+   */
+  async editMessage(
+    channelId: number,
+    msgId: string,
+    content: string,
+    options?: { buttons?: ButtonRow[] },
+  ): Promise<void> {
     if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildChatEdit(this.signer, { channelId, msgId, content });
+    const envelope = await buildChatEdit(this.signer, {
+      channelId,
+      msgId,
+      content,
+      buttons: options?.buttons,
+    });
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 

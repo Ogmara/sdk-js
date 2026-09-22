@@ -5,6 +5,59 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.61.0] - 2026-09-22
+
+Message buttons (protocol §3.3, matches l2-node 0.131.0): any wallet can
+attach a row/grid of interactive buttons to a chat message. Pressing one
+sends an ordinary signed `ChatMessage` — deliberately not a new message
+type — with `via_button: true` and `reply_to` pointing at the origin
+message, so it inherits attribution, moderation, and rate limits for free.
+
+### Added
+
+- `BUTTON_LIMITS`, `MessageButton`, `ButtonRow` types; `validateButtons()` —
+  client-side cap/charset validation before signing, mirroring
+  `validateBotDescriptor`. Exported from the package root.
+- `ChatMessageData` gains `buttons?: ButtonRow[]` and `viaButton?: boolean`;
+  `client.sendMessage(channelId, content, { buttons })` attaches a row.
+- `client.pressButton(origin, command)` — `origin` is `{ channelId, msgId,
+  author }` read fresh from the message currently being rendered (never a
+  cached copy — this is what stops a stale/deleted origin producing an
+  orphaned send). Builds the press described above. **Plaintext channels
+  only**, matching `sendMessage`'s existing constraint — see below.
+- `ChatEditData` gains `buttons?: ButtonRow[]`, the button lifecycle
+  mechanism (protocol §3.7): `undefined` leaves the row unchanged, `[]`
+  clears it, a non-empty array replaces it wholesale — this is how a bot
+  disables buttons after use or swaps in a sub-menu in place, via
+  `client.editMessage(channelId, msgId, content, { buttons })`.
+- `EncryptedChannelMessageParams`/`buildEncryptedChannelMessage` gain the
+  same `buttons`/`viaButton` fields, so a private/encrypted channel can carry
+  buttons too — they stay plaintext metadata even when `text` is encrypted,
+  same treatment as `mentions`/`reply_to`.
+
+### Security
+
+- **Doc-hardened a real trust gap found by this release's security audit,
+  rather than treating it as out of scope:** a button's `label` (what a user
+  sees) and `command` (what gets signed on press) are independent strings —
+  any wallet may attach buttons, so a button reading "📈 Show chart" can
+  carry `command: "/ban someone"`, and `pressButton` signs + sends it under
+  the presser's own wallet immediately, with no confirmation step and no
+  built-in way to see `command` first. This is inherent to the feature as
+  specified (protocol §3.3, `06-frontend.md` §6.1.3), not something the SDK
+  alone can close — the mitigation is client-UI disclosure (surfacing the
+  literal command on long-press/tooltip), now required normatively in
+  `06-frontend.md` §6.1.3 for the clients that render buttons. This release
+  corrects `pressButton`'s doc comment, which previously (and inaccurately)
+  compared a press's trust posture to a typed command's — a typed command is
+  authored and read by its own sender; a button's `command` is neither.
+- `validateButtons()`/`validateBotDescriptor()` docs now say explicitly they
+  are pre-send convenience only, never a security boundary — the node
+  re-validates and is authoritative regardless.
+- Fixed a pre-existing orphaned JSDoc block that left `validateBotDescriptor`
+  with no attached doc comment at all (a later insertion had pushed its
+  comment onto the wrong declaration).
+
 ## [0.60.1] - 2026-09-15
 
 ### Fixed

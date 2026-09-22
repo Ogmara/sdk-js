@@ -8,8 +8,8 @@
  */
 import { encode, decode } from '@msgpack/msgpack';
 import { aeadEncrypt, aeadDecrypt, wrapKey, unwrapKey, KEY_LEN, type WrappedKey } from './crypto';
-import { buildEnvelope, computeConversationId, computeChannelScope } from './envelope';
-import { MessageType } from './types';
+import { buildEnvelope, computeConversationId, computeChannelScope, validateButtons } from './envelope';
+import { MessageType, type ButtonRow } from './types';
 import { mediaToWire, mediaFromWire, mediaToWireAttachment, type MediaDescriptor } from './media';
 import type { WalletSigner } from './auth';
 
@@ -299,6 +299,15 @@ export interface EncryptedChannelMessageParams {
     filename?: string;
     thumbnail_cid?: string;
   }>;
+  /**
+   * <= `BUTTON_LIMITS.MAX_ROWS`. Validated locally before signing (protocol
+   * §3.3). Stays PLAINTEXT even though `text` is encrypted — same treatment
+   * as `mentions`/`reply_to` above — so do not put secrets in a button
+   * `label`/`command`; anyone who can see this envelope's metadata sees them.
+   */
+  buttons?: ButtonRow[];
+  /** Set by a caller building an encrypted button press. See `ChatMessageData.viaButton`. */
+  viaButton?: boolean;
 }
 
 /**
@@ -314,6 +323,7 @@ export async function buildEncryptedChannelMessage(
   p: EncryptedChannelMessageParams,
 ): Promise<Uint8Array> {
   if (p.epoch < 1) throw new Error('channel message requires key_epoch >= 1');
+  if (p.buttons) validateButtons(p.buttons);
   const scope = computeChannelScope(p.channelId);
   const { content, nonce } = encryptDmContent(p.convKey, scope, p.epoch, {
     text: p.text,
@@ -348,6 +358,14 @@ export async function buildEncryptedChannelMessage(
     enc_content: content,
     enc_nonce: nonce,
     key_epoch: p.epoch,
+    // Field-for-field the same shape `envelope.ts`'s `serializeButtonRow`
+    // produces (inlined here rather than imported, matching how
+    // `wireAttachments` above inlines rather than calling the sibling
+    // `serializeAttachment` helper).
+    buttons: (p.buttons ?? []).map((row) => ({
+      buttons: row.buttons.map((b) => ({ label: b.label, command: b.command })),
+    })),
+    via_button: p.viaButton ?? false,
   };
   return buildEnvelope(signer, MessageType.ChatMessage, payload);
 }

@@ -12,9 +12,10 @@ import {
 import { x25519Public } from './crypto';
 import { computeConversationId, computeChannelScope } from './envelope';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { buildEncryptedChannelMessage } from './dm';
+import { buildEncryptedChannelMessage, buildEncryptedChannelEdit } from './dm';
 import { WalletSigner } from './auth';
 import { buildDeletionRequest } from './envelope';
+import { encryptFile, type MediaDescriptor } from './media';
 
 const range = (start: number, end: number): Uint8Array =>
   Uint8Array.from({ length: end - start + 1 }, (_, i) => start + i);
@@ -139,6 +140,102 @@ describe('DM E2E (P1)', () => {
     const scope = computeChannelScope(12);
     const out = decryptDmContent(convKey, scope, 3, payload.enc_content, payload.enc_nonce);
     expect(out.text).toBe('secret channel msg 🛡️');
+  });
+
+  it('builds an encrypted channel edit whose enc_content decrypts to the new text, with buttons replaced', async () => {
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    const convKey = randomConvKey();
+    const msgId = 'ef'.repeat(32); // 32-byte hex
+    const envBytes = await buildEncryptedChannelEdit(signer, {
+      channelId: 12,
+      msgId,
+      convKey,
+      epoch: 4,
+      text: '1h chart 📈',
+      buttons: [{ buttons: [{ label: '4h', command: '/c BTC 4h' }] }],
+    });
+
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as {
+      target_id: Uint8Array; channel_id: number; content: string;
+      enc_content: Uint8Array; enc_nonce: Uint8Array; key_epoch: number;
+      buttons: Array<{ buttons: Array<{ label: string; command: string }> }>;
+    };
+
+    expect(payload.target_id.length).toBe(32);
+    expect(payload.channel_id).toBe(12);
+    expect(payload.content).toBe(''); // the legacy plaintext placeholder never leaks text
+    expect(payload.key_epoch).toBe(4);
+    expect(payload.enc_nonce.length).toBe(24);
+    expect(payload.buttons).toEqual([{ buttons: [{ label: '4h', command: '/c BTC 4h' }] }]);
+
+    const scope = computeChannelScope(12);
+    const out = decryptDmContent(convKey, scope, 4, payload.enc_content, payload.enc_nonce);
+    expect(out.text).toBe('1h chart 📈');
+  });
+
+  it('omits `buttons` entirely when not passed (node treats key-omitted as unchanged)', async () => {
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    const convKey = randomConvKey();
+    const envBytes = await buildEncryptedChannelEdit(signer, {
+      channelId: 12,
+      msgId: 'ef'.repeat(32),
+      convKey,
+      epoch: 1,
+      text: 'no button change',
+    });
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as Record<string, unknown>;
+    expect('buttons' in payload).toBe(false);
+  });
+
+  it('preserves encrypted media keys across an edit when the caller passes them forward', async () => {
+    // Regression guard (security audit, BLOCKING): the node's projection
+    // replaces enc_content wholesale but preserves the plaintext attachment
+    // stub as-is — the real per-file decryption key/mime/filename live ONLY
+    // inside the ciphertext. An edit that re-seals text WITHOUT re-sealing
+    // the media descriptors would permanently strand those files: listed
+    // forever, decryptable by nobody, including the author.
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    const convKey = randomConvKey();
+    const file = encryptFile(new Uint8Array([1, 2, 3]));
+    const media: MediaDescriptor[] = [
+      { cid: 'bafyoriginal', size: 3, mime: 'image/png', name: 'chart.png', key: file.key, nonce: file.nonce },
+    ];
+    const envBytes = await buildEncryptedChannelEdit(signer, {
+      channelId: 12,
+      msgId: 'ef'.repeat(32),
+      convKey,
+      epoch: 5,
+      text: 'updated caption',
+      media,
+    });
+    const env = decode(envBytes) as { payload: Uint8Array };
+    const payload = decode(env.payload) as { enc_content: Uint8Array; enc_nonce: Uint8Array };
+    const scope = computeChannelScope(12);
+    const out = decryptDmContent(convKey, scope, 5, payload.enc_content, payload.enc_nonce);
+    expect(out.text).toBe('updated caption');
+    expect(out.media).toHaveLength(1);
+    expect(out.media![0].cid).toBe('bafyoriginal');
+    expect(out.media![0].key).toEqual(file.key);
+    expect(out.media![0].name).toBe('chart.png');
+  });
+
+  it('rejects epoch 0 (legacy plaintext sentinel, invalid for an encrypted edit)', async () => {
+    const signer = await WalletSigner.generate();
+    signer.network = 'testnet';
+    await expect(
+      buildEncryptedChannelEdit(signer, {
+        channelId: 12,
+        msgId: 'ef'.repeat(32),
+        convKey: randomConvKey(),
+        epoch: 0,
+        text: 'x',
+      }),
+    ).rejects.toThrow(/key_epoch/);
   });
 });
 

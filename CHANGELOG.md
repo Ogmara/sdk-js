@@ -5,6 +5,72 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.62.0] - 2026-09-25
+
+Matches l2-node 0.133.0's new encrypted-`ChatEdit` support: editing an
+already-ENCRYPTED channel message's text was previously impossible
+(node-side `validate_chat_edit` had no encrypted branch at all — only
+DMs could have their text edited after send). Needed for the
+interactive-message-buttons plan's Phase 6 worked example, which edits a
+bot's own message in place to swap its button row — encrypted channels
+are the default for new Public/ReadPublic/Private channels, so the
+plaintext-only `client.editMessage()` can't reach them.
+
+### Added
+
+- `buildEncryptedChannelEdit(signer, { channelId, msgId, convKey, epoch,
+  text, media?, buttons? })` in `dm.ts`, exported from the package root
+  alongside the other encrypted builders. Modeled directly on
+  `buildEncryptedDmEdit` (same AEAD pattern: `encryptDmContent(convKey,
+  scope, epoch, { text, media })` under the channel scope, matching
+  `buildEncryptedChannelMessage`'s own AAD derivation exactly) and on
+  `buildChatEdit`'s plaintext `chatEditPayload()` (identical `buttons`
+  override contract: key omitted entirely means unchanged, `[]` clears
+  the row, a non-empty array replaces it wholesale — do not collapse
+  `undefined` into `[]`). `epoch < 1` is rejected before any encryption
+  work runs, matching `buildEncryptedDmEdit`'s identical guard.
+- `client.editMessage()`'s doc comment now points to
+  `buildEncryptedChannelEdit` for the encrypted case, mirroring how
+  `pressButton()`'s doc comment already points bots at
+  `buildEncryptedChannelMessage` — no new `client.ts` method was needed,
+  since the existing generic `sendMessageEnvelope()` already posts any
+  pre-built envelope to the same `/api/v1/messages` endpoint
+  `editMessage()` uses.
+- 4 new tests in `dm.test.ts`: an encrypted edit's `enc_content` decrypts
+  to the new text with `buttons` replaced; `buttons` is omitted entirely
+  (not sent as an empty array) when not passed; `epoch: 0` is rejected;
+  encrypted media descriptors survive an edit (see Fixed, below).
+
+### Fixed
+
+- **An encrypted channel edit permanently stranded the message's
+  encrypted-media decryption keys (BLOCKING, code audit).** The node's
+  projection replaces `enc_content`/`enc_nonce`/`key_epoch` WHOLESALE on
+  an edit but preserves the original's plaintext `attachments` stub
+  as-is (`{cid, mime_type: 'application/octet-stream', size_bytes}` —
+  deliberately opaque, per `buildEncryptedChannelMessage`'s own doc
+  comment). The real per-file decryption key, true mime type and
+  filename live ONLY inside the sealed `enc_content` blob. The first
+  version of `buildEncryptedChannelEdit` sealed `{ text }` only and had
+  no `media` param at all — so editing so much as a typo on an encrypted
+  message that carried an attachment silently discarded that
+  attachment's key from the new ciphertext, permanently: the file stayed
+  listed (the stub survives) but became undecryptable for every reader,
+  including the author, forever. Fixed by adding `media?:
+  MediaDescriptor[]` to `EncryptedChannelEditParams` and threading it
+  into `encryptDmContent`, exactly mirroring
+  `buildEncryptedChannelMessage`'s own handling — a caller editing a
+  message's text while keeping its media passes the SAME descriptors
+  it already has in hand from decrypting that message.
+- Two wrong message-type numbers in doc comments (no code impact):
+  `buildEncryptedChannelMessage` said `ChatMessage (0x04)` — `ChatMessage`
+  is `0x01`, `0x04` is `ChatReaction`; the new `buildEncryptedChannelEdit`
+  inherited the same error pattern, saying `ChatEdit (0x05)` —
+  `ChatEdit` is `0x02`, `0x05` is `DirectMessage`.
+
+`npm run lint` clean, `npm test` 194/194 passing, `npm audit` 0
+vulnerabilities.
+
 ## [0.61.0] - 2026-09-22
 
 Message buttons (protocol §3.3, matches l2-node 0.131.0): any wallet can

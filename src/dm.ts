@@ -311,7 +311,7 @@ export interface EncryptedChannelMessageParams {
 }
 
 /**
- * Build a signed, encrypted `ChatMessage` (0x04) for a private channel. Only the
+ * Build a signed, encrypted `ChatMessage` (0x01) for a private channel. Only the
  * TEXT is sealed — under the channel epoch key with `aad = channel_scope || epoch`
  * (same scheme as a DM body) — and carried in `enc_content`/`enc_nonce`/`key_epoch`;
  * the plaintext `content` is empty. Per spec §3.3 `mentions`/`reply_to`/
@@ -368,4 +368,83 @@ export async function buildEncryptedChannelMessage(
     via_button: p.viaButton ?? false,
   };
   return buildEnvelope(signer, MessageType.ChatMessage, payload);
+}
+
+/** Parameters for {@link buildEncryptedChannelEdit}. */
+export interface EncryptedChannelEditParams {
+  channelId: number;
+  /** Hex msg_id (32-byte) of the original channel message being edited. */
+  msgId: string;
+  /** The channel epoch key for `epoch` (same key the original body uses). */
+  convKey: Uint8Array;
+  epoch: number;
+  /** The new plaintext text. */
+  text: string;
+  /**
+   * Encrypted-media descriptors to carry forward. `enc_content` is REPLACED
+   * WHOLESALE by the node's projection (protocol §3.7), and a file's
+   * decryption key/real mime/filename live ONLY inside the ciphertext
+   * (`buildEncryptedChannelMessage`'s doc comment) — the plaintext
+   * `attachments` stub the node preserves has none of that. So editing an
+   * encrypted message's TEXT while silently omitting media that message
+   * already carries would permanently strand those files: still listed,
+   * never again decryptable, by anyone, including the author. Pass the SAME
+   * descriptors the original message carries (already in hand from
+   * decrypting it) to keep them readable; pass new ones if the edit also
+   * changes the attached media.
+   */
+  media?: MediaDescriptor[];
+  /**
+   * `undefined` = leave the button row unchanged; `[]` = clear it; a
+   * non-empty array = replace it wholesale — THIS is the in-place-menu-edit
+   * mechanism a bot uses to swap a card's button row on press (spec §3.7).
+   */
+  buttons?: ButtonRow[];
+}
+
+/**
+ * Build a signed, encrypted `ChatEdit` (0x02) against an already-encrypted
+ * channel message (l2-node 0.133.0+). The new text is sealed under
+ * `convKey` exactly like the channel message body (`aad = channel_scope ||
+ * epoch`) and carried in `enc_content`/`enc_nonce`; the node projects it
+ * onto the original message so the edited message decrypts identically to
+ * a never-edited one. The legacy plaintext `content` string is sent empty
+ * — `validate_chat_edit`'s encrypted branch (l2-node) requires it.
+ *
+ * The node cross-checks this edit's encrypted-or-plaintext shape against
+ * the ORIGINAL message's own shape and rejects a mismatch outright — do
+ * not call this against a message that was sent PLAINTEXT (use
+ * {@link buildChatEdit} for that instead); there is no way to flip a
+ * message's encryption status via an edit.
+ */
+export async function buildEncryptedChannelEdit(
+  signer: WalletSigner,
+  p: EncryptedChannelEditParams,
+): Promise<Uint8Array> {
+  if (p.epoch < 1) throw new Error('channel edit requires key_epoch >= 1 (epoch 0 is legacy plaintext)');
+  if (p.buttons !== undefined) validateButtons(p.buttons);
+  const scope = computeChannelScope(p.channelId);
+  const { content, nonce } = encryptDmContent(p.convKey, scope, p.epoch, {
+    text: p.text,
+    media: p.media,
+  });
+  const payload: Record<string, unknown> = {
+    target_id: hexToBytes32(p.msgId),
+    channel_id: p.channelId,
+    content: '', // text rides in enc_content
+    edited_at: Date.now(),
+    enc_content: content,
+    enc_nonce: nonce,
+    key_epoch: p.epoch,
+  };
+  // `undefined` (key omitted) means UNCHANGED on the node (EditPayload.buttons
+  // is `Option<Vec<ButtonRow>>`); `[]` explicitly CLEARS the row; a non-empty
+  // array REPLACES it wholesale — mirrors `chatEditPayload`'s plaintext
+  // sibling in envelope.ts. Do not collapse these into `?? []`.
+  if (p.buttons !== undefined) {
+    payload.buttons = p.buttons.map((row) => ({
+      buttons: row.buttons.map((b) => ({ label: b.label, command: b.command })),
+    }));
+  }
+  return buildEnvelope(signer, MessageType.ChatEdit, payload);
 }

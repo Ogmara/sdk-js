@@ -1300,6 +1300,14 @@ export class OgmaraClient {
    * pass a new row to replace it wholesale — e.g. a bot swapping in a
    * sub-menu in place, or disabling a row after it's been used. There is no
    * protocol-level expiry.
+   *
+   * **Plaintext only, like {@link OgmaraClient.sendMessage}** — same
+   * constraint as {@link OgmaraClient.pressButton}. The node cross-checks an
+   * edit's encrypted-or-plaintext shape against the ORIGINAL message's own
+   * shape and rejects a mismatch (l2-node 0.133.0+); editing an encrypted
+   * channel message's text requires {@link buildEncryptedChannelEdit} (`text`,
+   * `convKey`, `epoch`, optional `buttons`) sent via
+   * {@link OgmaraClient.sendMessageEnvelope} instead.
    */
   async editMessage(
     channelId: number,

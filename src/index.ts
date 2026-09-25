@@ -70,6 +70,7 @@ export {
   buildEncryptedDirectMessage,
   buildEncryptedDmEdit,
   buildEncryptedChannelMessage,
+  buildEncryptedChannelEdit,
 } from './dm';
 export type {
   DmPlaintext,
@@ -78,6 +79,7 @@ export type {
   EncryptedDmParams,
   EncryptedDmEditParams,
   EncryptedChannelMessageParams,
+  EncryptedChannelEditParams,
 } from './dm';
 export {
   MEDIA_AAD,

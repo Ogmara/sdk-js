@@ -919,8 +919,25 @@ export interface NotificationsResponse {
 
 /** Channel creation data for POST /api/v1/channels. */
 export interface ChannelCreateData {
-  /** SC-assigned sequential channel ID. */
-  channelId: number;
+  /**
+   * SC-assigned sequential channel ID for Public/ReadPublic. Omit for
+   * Private (`channelType === 2`) — `OgmaraClient.createChannel` derives
+   * it (and `idDerivationTs`) via `derivePrivateChannelId`, the one
+   * canonical derivation site (`docs/specs/05-clients.md`
+   * §private-channel-creation). Required for Public/ReadPublic.
+   */
+  channelId?: number;
+  /**
+   * Private-channel-only, set automatically by `createChannel` when it
+   * derives `channelId` — the millisecond timestamp used as the third
+   * input of the derivation. l2-node (0.139.0+) verifies this against
+   * the claimed `channelId`; omitting it on a Private create is only
+   * accepted by nodes that already know the channel (legacy backfill),
+   * never on first sight. Setting this directly (bypassing
+   * `createChannel`'s derivation) is for advanced/offline signing only —
+   * it MUST be the exact timestamp that was hashed into `channelId`.
+   */
+  idDerivationTs?: number;
   /** Unique slug (matches SC), max 64 chars. */
   slug: string;
   /** Channel type: 0 = Public, 1 = ReadPublic, 2 = Private. */

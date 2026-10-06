@@ -399,6 +399,10 @@ function channelCreatePayload(data: ChannelCreateData): Record<string, unknown> 
     // P4: null → node applies type-based defaults (Private always encrypted).
     encryption_enabled: data.encryptionEnabled ?? null,
     history_visibility: data.historyVisibility ?? null,
+    // Security fix (l2-node 0.139.0): null for Public/ReadPublic (SC-assigned
+    // ids are never derived) or for an advanced caller who set channelId
+    // directly without going through createChannel's derivation.
+    id_derivation_ts: data.idDerivationTs ?? null,
   };
 }
 
@@ -665,6 +669,23 @@ export async function buildInvite(
 }
 
 export async function buildChannelCreate(signer: WalletSigner, data: ChannelCreateData): Promise<Uint8Array> {
+  // Security fix (l2-node 0.139.0): this is the ONE place that enforces
+  // "a Private create always carries a derivation" before signing — if
+  // `OgmaraClient.createChannel` (the normal, sole derivation site) was
+  // bypassed (direct `buildChannelCreate` call, offline/CLI signing),
+  // fail loudly here rather than let the node reject it after a wasted
+  // round-trip, or worse, silently get accepted by a legacy/misconfigured
+  // node with `require_private_id_derivation = false`.
+  if (data.channelType === 2) {
+    if (data.channelId === undefined || data.idDerivationTs === undefined) {
+      throw new Error(
+        'Private channel create requires both channelId and idDerivationTs — use ' +
+          'OgmaraClient.createChannel (or derivePrivateChannelId) rather than building this envelope directly.',
+      );
+    }
+  } else if (data.channelId === undefined) {
+    throw new Error('channelId is required for Public/ReadPublic channel create.');
+  }
   return buildEnvelope(signer, MessageType.ChannelCreate, channelCreatePayload(data));
 }
 

@@ -22,6 +22,7 @@ import type { PowChallenge } from './pow';
 import { solveChallengeAsync } from './pow';
 import { addressToPubkey } from './encryption';
 import { normalizeHashtag } from './utils';
+import { derivePrivateChannelId } from './channelId';
 import {
   buildChatMessage,
   buildNewsPost,
@@ -843,10 +844,22 @@ export class OgmaraClient {
   }
 
   /** POST /api/v1/channels — create a new channel.
-   *  Requires an on-chain SC call first to get the channel_id. */
+   *  Public/ReadPublic: requires an on-chain SC call first to get the
+   *  channel_id (pass it as `data.channelId`).
+   *  Private: `channelId` is derived HERE (the sole derivation site —
+   *  see `derivePrivateChannelId`) when omitted, using the resolved
+   *  wallet identity (`signer.walletAddress ?? signer.address`), never
+   *  the signer's own signing/device address — l2-node (0.139.0+)
+   *  verifies this derivation using the same resolved-wallet identity. */
   async createChannel(data: ChannelCreateData): Promise<ChannelCreateResponse> {
     if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildChannelCreate(this.signer, data);
+    let createData = data;
+    if (data.channelType === 2 && data.channelId === undefined) {
+      const creatorWallet = this.signer.walletAddress ?? this.signer.address;
+      const { channelId, idDerivationTs } = derivePrivateChannelId(creatorWallet, data.slug);
+      createData = { ...data, channelId, idDerivationTs };
+    }
+    const envelope = await buildChannelCreate(this.signer, createData);
     return this.postEnvelope('/api/v1/channels', envelope);
   }
 

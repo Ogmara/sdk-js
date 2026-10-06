@@ -5,6 +5,44 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0] - 2026-10-06
+
+### Added
+
+- **`derivePrivateChannelId(creatorWalletAddress, slug, ts?)`**, exported
+  from the package root — the canonical, single-source-of-truth
+  implementation of the private-channel `channel_id` derivation
+  (`Keccak-256(wallet_address + slug + id_derivation_ts) % (2^53-1)`,
+  re-rolling `ts` past the node's namespace floor). Matches l2-node
+  0.139.0's new verification byte-for-byte — cross-implementation-locked
+  by a shared known-answer test (`src/channelId.test.ts` /
+  `validation.rs`'s `matches_the_sdk_js_kat_cross_impl_lock`).
+
+### Changed
+
+- **`OgmaraClient.createChannel`** now derives a Private channel's
+  `channelId` itself (via the new helper) when the caller omits it,
+  using the signer's resolved WALLET identity (`signer.walletAddress ??
+  signer.address`) — never the signer's own signing/device address. This
+  is now the SOLE derivation site; `web`/`desktop`/`mobile`'s own
+  per-client hash computations are being removed in favor of this one
+  (see their own CHANGELOGs).
+- **`ChannelCreateData.channelId`** is now optional (required only for
+  Public/ReadPublic, where it's still the SC-assigned id); added
+  `idDerivationTs?: number`. **`buildChannelCreate`** throws if a Private
+  create is attempted without both fields set — this can only happen by
+  bypassing `createChannel` (direct envelope building, offline/CLI
+  signing), and fails loudly there rather than wasting a round-trip to
+  the node or silently depending on a legacy node's relaxed enforcement.
+
+### Security
+
+- Closes l2-node 0.139.0's `federate_channel` first-sight-trust residual
+  from the CLIENT side: l2-node now verifies this derivation, but only if
+  the client actually sends it. See that release's CHANGELOG for the
+  full rationale, severity, and the acknowledged ~53-bit-strength
+  limitation (not full 256-bit Keccak closure).
+
 ## [0.62.0] - 2026-09-25
 
 Matches l2-node 0.133.0's new encrypted-`ChatEdit` support: editing an

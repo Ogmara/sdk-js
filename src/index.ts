@@ -93,6 +93,8 @@ export {
 } from './media';
 export type { MediaDescriptor, EncryptedFile } from './media';
 export { solveChallenge, solveChallengeAsync } from './pow';
+export { derivePrivateChannelId } from './channelId';
+export type { PrivateChannelIdDerivation } from './channelId';
 
 // Bot command parsing (protocol §3.3, §3.11). `parseCommand` is the bot
 // author's half of the contract — see its doc comment for why a bot must fall

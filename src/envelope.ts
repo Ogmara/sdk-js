@@ -48,7 +48,15 @@ import {
   type KeyVaultSyncData,
   type ReportData,
   type CounterVoteData,
+  type BuildInviteOptions,
+  type ChannelJoinOptions,
 } from './types';
+import {
+  MAX_INVITE_ENVELOPE_BYTES,
+  MAX_INVITER_GRANT_BYTES,
+  MAX_INVITE_TTL_MS,
+  assertInviteBytes,
+} from './invite';
 
 // `MSG_TYPE_NAME` (numeric msg_type → Rust variant NAME) is derived from the
 // `MessageType` enum in `./types` so it can never drift out of sync. See there.
@@ -438,8 +446,13 @@ function channelUnmutePayload(data: ChannelUnmuteData): Record<string, unknown> 
   };
 }
 
-function channelJoinPayload(channelId: number): Record<string, unknown> {
-  return { channel_id: channelId };
+function channelJoinPayload(channelId: number, invite?: Uint8Array): Record<string, unknown> {
+  // `invite` is OMITTED when absent — never encoded as null. The node's
+  // `Option<Vec<u8>>` + `#[serde(default)]` accepts a missing key, and older
+  // nodes (which ignore unknown map keys) keep working unchanged.
+  const payload: Record<string, unknown> = { channel_id: channelId };
+  if (invite !== undefined) payload.invite = invite;
+  return payload;
 }
 
 function channelLeavePayload(channelId: number): Record<string, unknown> {
@@ -495,8 +508,18 @@ function invitePayload(
   channelId: number,
   targetUser: string,
   anchorNode?: string,
+  options?: BuildInviteOptions,
 ): Record<string, unknown> {
-  return { channel_id: channelId, target_user: targetUser, anchor_node: anchorNode ?? null };
+  // `anchor_node` keeps its historical explicit-null encoding. The two
+  // l2-node 0.140.0 fields are OMITTED when undefined, never null.
+  const payload: Record<string, unknown> = {
+    channel_id: channelId,
+    target_user: targetUser,
+    anchor_node: anchorNode ?? null,
+  };
+  if (options?.expiresAt !== undefined) payload.expires_at = options.expiresAt;
+  if (options?.inviterGrant !== undefined) payload.inviter_grant = options.inviterGrant;
+  return payload;
 }
 
 // --- Core envelope builder ---
@@ -613,8 +636,20 @@ export async function buildDirectMessage(signer: WalletSigner, data: DirectMessa
 
 // Channel admin builders
 
-export async function buildChannelJoin(signer: WalletSigner, channelId: number): Promise<Uint8Array> {
-  return buildEnvelope(signer, MessageType.ChannelJoin, channelJoinPayload(channelId));
+/**
+ * Build a signed `ChannelJoin` envelope. For a Private channel (l2-node
+ * 0.140.0+) pass `options.invite` — the raw signed `ChannelInvite` envelope
+ * naming this wallet, exactly as received (≤ {@link MAX_INVITE_ENVELOPE_BYTES}
+ * bytes). It is carried as msgpack `bin` and omitted entirely when absent.
+ */
+export async function buildChannelJoin(
+  signer: WalletSigner,
+  channelId: number,
+  options?: ChannelJoinOptions,
+): Promise<Uint8Array> {
+  const invite = options?.invite;
+  if (invite !== undefined) assertInviteBytes(invite);
+  return buildEnvelope(signer, MessageType.ChannelJoin, channelJoinPayload(channelId, invite));
 }
 
 export async function buildChannelLeave(signer: WalletSigner, channelId: number): Promise<Uint8Array> {
@@ -659,13 +694,71 @@ export async function buildUnpin(signer: WalletSigner, channelId: number, msgId:
   return buildEnvelope(signer, MessageType.ChannelUnpinMessage, pinPayload(channelId, msgId));
 }
 
+/**
+ * Build a signed `ChannelInvite` envelope.
+ *
+ * Signature: `buildInvite(signer, channelId, target, anchorNode?, options?)`.
+ * The host-node hint may be given EITHER positionally (`anchorNode`, the
+ * original form, kept for backward compatibility) OR as `options.anchorNode`
+ * (the form spec 05 §8.4 shows, e.g.
+ * `buildInvite(signer, id, target, undefined, { anchorNode, expiresAt })`);
+ * passing both with different values throws.
+ *
+ * `options` (l2-node 0.140.0+ private join gate; `expiresAt`/`inviterGrant`
+ * are omitted from the payload when undefined):
+ * - `anchorNode` — alternative to the positional argument (see above).
+ * - `expiresAt` — explicit expiry, unix ms. Must be an integer in the future
+ *   and no more than {@link MAX_INVITE_TTL_MS} ahead (the node requires
+ *   `timestamp < expires_at <= timestamp + 14 days`). The upper bound holds
+ *   because this check reads `now_check = Date.now()` first and
+ *   `buildEnvelope` then takes the envelope timestamp with `Date.now()`
+ *   (before signing), so `timestamp >= now_check` and
+ *   `expiresAt <= now_check + 14d <= timestamp + 14d`. Without it the node
+ *   applies a 7-day default.
+ * - `inviterGrant` — raw creator-signed `ChannelAddModerator` envelope naming
+ *   the inviter (≤ {@link MAX_INVITER_GRANT_BYTES} bytes). Required for an
+ *   invite by a moderator to be accepted by nodes that do not (yet) know
+ *   that moderator; omit when the inviter is the creator.
+ *
+ * Throws if the resulting envelope exceeds {@link MAX_INVITE_ENVELOPE_BYTES}
+ * (it could never be attached to a join).
+ */
 export async function buildInvite(
   signer: WalletSigner,
   channelId: number,
   target: string,
   anchorNode?: string,
+  options?: BuildInviteOptions,
 ): Promise<Uint8Array> {
-  return buildEnvelope(signer, MessageType.ChannelInvite, invitePayload(channelId, target, anchorNode));
+  if (options?.expiresAt !== undefined) {
+    const exp = options.expiresAt;
+    const now = Date.now();
+    if (!Number.isSafeInteger(exp) || exp <= now) {
+      throw new RangeError('invite expiresAt must be an integer unix-ms timestamp in the future');
+    }
+    if (exp > now + MAX_INVITE_TTL_MS) {
+      throw new RangeError(`invite expiresAt is more than ${MAX_INVITE_TTL_MS} ms ahead (14-day maximum)`);
+    }
+  }
+  if (options?.inviterGrant !== undefined) {
+    const g = options.inviterGrant;
+    if (!(g instanceof Uint8Array) || g.length === 0) throw new TypeError('inviterGrant must be a non-empty Uint8Array');
+    if (g.length > MAX_INVITER_GRANT_BYTES) {
+      throw new RangeError(`inviterGrant too large (${g.length} bytes, limit ${MAX_INVITER_GRANT_BYTES})`);
+    }
+  }
+  if (anchorNode !== undefined && options?.anchorNode !== undefined && anchorNode !== options.anchorNode) {
+    throw new Error('buildInvite: anchorNode given twice with different values');
+  }
+  const envelope = await buildEnvelope(
+    signer,
+    MessageType.ChannelInvite,
+    invitePayload(channelId, target, anchorNode ?? options?.anchorNode, options),
+  );
+  if (envelope.length > MAX_INVITE_ENVELOPE_BYTES) {
+    throw new RangeError(`invite envelope too large (${envelope.length} bytes, limit ${MAX_INVITE_ENVELOPE_BYTES})`);
+  }
+  return envelope;
 }
 
 export async function buildChannelCreate(signer: WalletSigner, data: ChannelCreateData): Promise<Uint8Array> {

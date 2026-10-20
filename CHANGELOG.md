@@ -5,6 +5,94 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0] - 2026-10-20
+
+Client half of the private-channel join gate (l2-node 0.140.0): every
+`ChannelJoin` into a Private channel must carry a signed `ChannelInvite`
+naming the joining wallet, issued by the creator or by a moderator (who
+bundles the creator-signed grant proving its authority). All additions are
+optional parameters or new exports — existing call sites compile and run
+unchanged against older nodes.
+
+### Added
+
+- **`buildInvite(signer, channelId, target, anchorNode?, options?)`** —
+  new `options: { expiresAt?, inviterGrant?, anchorNode? }` (`BuildInviteOptions`;
+  `options.anchorNode` is the spec-05 alternative to the positional argument,
+  a conflicting duplicate throws).
+  `expires_at` (unix ms, future, ≤ 14 days ahead) and `inviter_grant`
+  (raw `ChannelAddModerator` envelope, ≤ 1024 bytes, msgpack `bin`) are
+  **omitted from the payload when undefined, never null**. Throws if the
+  finished envelope exceeds 2048 bytes. Now exported from the package root.
+- **`buildChannelJoin(signer, channelId, options?)`** /
+  **`OgmaraClient.joinChannel(channelId, options?)`** — `options.invite`
+  (`ChannelJoinOptions`) attaches the raw invite envelope as msgpack `bin`
+  (≤ 2048 bytes); the key is omitted when absent.
+- **`OgmaraClient.federateChannel(channelId, hostUrl, options?)`** —
+  `options.invite` (`FederateChannelOptions`) is sent as standard base64 in
+  the JSON body: `{ host_url, invite? }`.
+- **`OgmaraClient.getModeratorGrant(channelId)`** — fetches
+  `GET /api/v1/channels/{id}/moderators/{wallet}/grant` and returns the raw
+  grant bytes, or `null` on 404.
+- **`OgmaraClient.findPendingInvite(channelId)`** — one
+  `type=channel_invite` notifications request (limit 200, bounded to the
+  last 14 days + 1 h) filtered through the new pure
+  **`selectPendingInvite(notifications, { channelId, wallet, now? })`**:
+  keeps only invites for this channel aimed at the current wallet, skips
+  absent/`null`/undecodable envelopes, signed timestamps more than 4 min in
+  the future, and invites with `now >= expiresAt - 5 min` (client margin
+  tighter than the node's), and returns the NEWEST qualifying one as
+  `PendingInvite` (`invite` bytes + the decoded fields incl. `inviter` and
+  `anchorNode`, the federation host hint).
+- **`decodeChannelInvite(bytesOrBase64)`** — UNVERIFIED decode for UI
+  (`channelId`, `targetUser`, `inviter`, `timestamp`, effective `expiresAt`,
+  `hasGrant`, plus `msgId`, `anchorNode?`, `explicitExpiresAt?`,
+  `inviterGrant?`). Accepts both the
+  named-map and the positional-array envelope/payload wire forms.
+- **`encodeInviteForUrl` / `decodeInviteFromUrl`** (unpadded base64url,
+  strict, size-capped) and **`buildPrivateChannelInviteUrl(channelId,
+  invite, hostUrl?)`** (third argument may also be `{ hostNodeUrl?, baseUrl? }`) →
+  `https://ogmara.org/app/#/join/{id}?node=…&inv=…`.
+- `bytesToBase64` / `base64ToBytes` (strict, pure JS) and constants
+  `DEFAULT_INVITE_TTL_MS` (7 d), `MAX_INVITE_TTL_MS` (14 d),
+  `MIN_INVITE_TTL_MS` (1 min, client-side), `MAX_INVITE_ENVELOPE_BYTES`
+  (2048), `MAX_INVITER_GRANT_BYTES` (1024), `INVITE_EXPIRY_MARGIN_MS`,
+  `INVITE_FUTURE_TOLERANCE_MS`, `DEFAULT_INVITE_LINK_BASE`.
+- Types: `Notification.invite_envelope?: string | null`,
+  `Notification.invite_expires_at?: number | null`, `InviteUserOptions`,
+  `InviteUserResult`, `BuildInviteOptions`, `ChannelJoinOptions`,
+  `FederateChannelOptions`, `DecodedChannelInvite`, `PendingInvite`.
+
+### Changed
+
+- **`OgmaraClient.inviteUser(channelId, address, options?)`** now returns
+  `{ inviteEnvelope, expiresAt, inviterGrantAttached }` (was `void`) and
+  signs an explicit expiry (`options.ttlMs`, default 7 days, 1 min – 14 days,
+  `RangeError` otherwise). It first reads the channel (`getChannel`) to learn
+  the creator; when the caller is not the creator it fetches and bundles the
+  moderator grant (a 404 falls back to an invite without grant, which only
+  nodes already listing the moderator accept). It now throws if the channel's
+  creator is unknown on the caller's node.
+- **`getNotifications`** normalizes a non-string `invite_envelope` / a
+  non-integer `invite_expires_at` (e.g. wire `null`) to an absent key.
+- `inviteUser`, `joinChannel` and `findPendingInvite` capture the signer at
+  the start and abort (or return null) if `withSigner` swaps it mid-flight.
+- `joinChannel` / `federateChannel` pre-check a supplied invite locally
+  (decodes, same channel, addressed to this wallet) and throw instead of
+  sending a request the node would reject.
+
+### Security
+
+- Bearer links are **not** supported for Private channels: an invite is
+  bound to one wallet address, so a forwarded personal link is useless to
+  anyone else. The previous bare `#/join/{id}` link grants nothing for a
+  Private channel on l2-node 0.140.0+.
+- Client-side caps mirror the node's on every untrusted input: invite
+  envelopes ≤ 2048 bytes, grants ≤ 1024 bytes, URL/base64 text length checked
+  before decoding.
+- Decoding helpers verify nothing — signature, inviter authority and
+  kick/ban state are enforced by the node only. Documented as UI-only.
+
 ## [0.63.0] - 2026-10-06
 
 ### Added

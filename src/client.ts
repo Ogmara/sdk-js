@@ -24,6 +24,19 @@ import { addressToPubkey } from './encryption';
 import { normalizeHashtag } from './utils';
 import { derivePrivateChannelId } from './channelId';
 import {
+  DEFAULT_INVITE_TTL_MS,
+  MAX_INVITE_TTL_MS,
+  MIN_INVITE_TTL_MS,
+  MAX_INVITER_GRANT_BYTES,
+  assertInviteBytes,
+  base64ToBytes,
+  bytesToBase64,
+  decodeChannelInvite,
+  isPlausibleModeratorGrant,
+  selectPendingInvite,
+  type PendingInvite,
+} from './invite';
+import {
   buildChatMessage,
   buildNewsPost,
   buildNewsComment,
@@ -135,6 +148,10 @@ import type {
   PresenceRecord,
   PresenceResponse,
   KnownNode,
+  InviteUserOptions,
+  InviteUserResult,
+  ChannelJoinOptions,
+  FederateChannelOptions,
 } from './types';
 
 /**
@@ -870,10 +887,25 @@ export class OgmaraClient {
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
-  /** POST /api/v1/messages — join a channel. */
-  async joinChannel(channelId: number): Promise<void> {
-    if (!this.signer) throw new Error('Signer required');
-    const envelope = await buildChannelJoin(this.signer, channelId);
+  /**
+   * POST /api/v1/messages — join a channel.
+   *
+   * Joining a PRIVATE channel requires `options.invite` (l2-node 0.140.0+):
+   * the raw signed `ChannelInvite` envelope naming this wallet, e.g. from
+   * {@link OgmaraClient.findPendingInvite} or a personal invite link
+   * (`decodeInviteFromUrl`). Public/ReadPublic joins need nothing.
+   *
+   * When an invite is given it is pre-checked locally (decodes as a
+   * `ChannelInvite` for this channel, bound to this wallet) and the call
+   * throws on a mismatch instead of sending a join the node would reject.
+   * Expiry and the inviter's authority are left to the node.
+   */
+  async joinChannel(channelId: number, options?: ChannelJoinOptions): Promise<void> {
+    const signer = this.signer;
+    if (!signer) throw new Error('Signer required');
+    if (options?.invite !== undefined) this.precheckInvite(channelId, options.invite, signer);
+    const envelope = await buildChannelJoin(signer, channelId, options);
+    this.assertSameSigner(signer);
     await this.postEnvelope('/api/v1/messages', envelope);
   }
 
@@ -884,13 +916,47 @@ export class OgmaraClient {
    * channel's gossip topic, so the channel's encrypted messages + keys flow here
    * live without the member switching nodes. `hostUrl` comes from the invite link.
    * Authenticated.
+   *
+   * l2-node 0.140.0+ answers 403 unless the caller is already a member/creator
+   * or `options.invite` carries a valid invite naming this wallet; send the
+   * same invite to the subsequent `joinChannel`. The invite goes on the wire
+   * as standard base64 in the JSON body (`{ host_url, invite? }`), omitted
+   * when absent. Same local pre-check as `joinChannel`.
    */
-  async federateChannel(channelId: number, hostUrl: string): Promise<{ federated: boolean; channel_id: number }> {
-    if (!this.signer) throw new Error('Signer required');
-    return this.postJson(
-      `/api/v1/channels/${channelId}/federate`,
-      { host_url: hostUrl },
-    );
+  async federateChannel(
+    channelId: number,
+    hostUrl: string,
+    options?: FederateChannelOptions,
+  ): Promise<{ federated: boolean; channel_id: number }> {
+    const signer = this.signer;
+    if (!signer) throw new Error('Signer required');
+    const body: { host_url: string; invite?: string } = { host_url: hostUrl };
+    if (options?.invite !== undefined) {
+      this.precheckInvite(channelId, options.invite, signer);
+      body.invite = bytesToBase64(options.invite);
+    }
+    return this.postJson(`/api/v1/channels/${channelId}/federate`, body);
+  }
+
+  /**
+   * Find a usable invite to Private channel `channelId` for this client's
+   * wallet among its `channel_invite` notifications (needs l2-node 0.140.0+,
+   * which attaches `invite_envelope`). Returns null when none qualifies.
+   *
+   * One request: `type=channel_invite`, the node's maximum page (200),
+   * bounded below by `now - MAX_INVITE_TTL_MS` — anything older is expired
+   * anyway. Filtering is done by {@link selectPendingInvite} with a client
+   * expiry margin TIGHTER than the node's. The result is UNVERIFIED (the node
+   * verifies on join); a wallet switch during the request returns null.
+   */
+  async findPendingInvite(channelId: number): Promise<PendingInvite | null> {
+    const signer = this.signer;
+    if (!signer) throw new Error('Signer required');
+    const wallet = signer.walletAddress ?? signer.address;
+    const since = Date.now() - MAX_INVITE_TTL_MS - 60 * 60 * 1000;
+    const resp = await this.getNotifications(since, 200, 'channel_invite');
+    if (this.signer !== signer) return null;
+    return selectPendingInvite(resp?.notifications ?? [], { channelId, wallet });
   }
 
   /** POST /api/v1/messages — leave a channel. */
@@ -1096,7 +1162,21 @@ export class OgmaraClient {
     let path = `/api/v1/notifications?limit=${limit}`;
     if (since !== undefined) path += `&since=${since}`;
     if (type !== undefined) path += `&type=${encodeURIComponent(type)}`;
-    return this.getAuthenticated(path);
+    const resp = await this.getAuthenticated<NotificationsResponse>(path);
+    // Normalize the l2-node 0.140.0 invite fields at the wire boundary: a
+    // `null` (or any non-conforming value) becomes an absent key, so a
+    // consumer's `!== undefined` check can't let a wire null through.
+    for (const n of Array.isArray(resp?.notifications) ? resp.notifications : []) {
+      if (!n || typeof n !== 'object') continue;
+      if ('invite_envelope' in n && typeof n.invite_envelope !== 'string') delete n.invite_envelope;
+      if (
+        'invite_expires_at' in n &&
+        !(typeof n.invite_expires_at === 'number' && Number.isSafeInteger(n.invite_expires_at))
+      ) {
+        delete n.invite_expires_at;
+      }
+    }
+    return resp;
   }
 
   /** POST /api/v1/messages — post a news article (signed envelope). */
@@ -1295,12 +1375,116 @@ export class OgmaraClient {
    * an unusable value — omitting it there is exactly today's behavior
    * (invite still works, just without auto-federate) rather than a new
    * failure mode.
+   *
+   * Private join gate (l2-node 0.140.0+): the invite carries an explicit
+   * `expires_at` (`options.ttlMs`, default 7 days, 1 min – 14 days), and when
+   * the caller is not the channel creator the creator-signed moderator grant
+   * is fetched ({@link OgmaraClient.getModeratorGrant}) and bundled. Returns
+   * the raw signed envelope so the inviter can also hand it over as a
+   * personal link (`buildPrivateChannelInviteUrl`) — it is bound to
+   * `address` and useless to anyone else. Older callers that ignore the
+   * return value are unaffected.
+   *
+   * Throws if the channel's creator is unknown on this node, if `ttlMs` is
+   * out of range, or if the account changes while the call is in flight.
    */
-  async inviteUser(channelId: number, address: string): Promise<void> {
-    if (!this.signer) throw new Error('Signer required');
+  async inviteUser(channelId: number, address: string, options?: InviteUserOptions): Promise<InviteUserResult> {
+    const signer = this.signer;
+    if (!signer) throw new Error('Signer required');
+    const ttlMs = options?.ttlMs ?? DEFAULT_INVITE_TTL_MS;
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < MIN_INVITE_TTL_MS || ttlMs > MAX_INVITE_TTL_MS) {
+      throw new RangeError(
+        `ttlMs must be an integer between ${MIN_INVITE_TTL_MS} and ${MAX_INVITE_TTL_MS} (got ${ttlMs})`,
+      );
+    }
+    const wallet = signer.walletAddress ?? signer.address;
     const anchorNode = this.nodeUrl.startsWith('https://') ? this.nodeUrl : undefined;
-    const envelope = await buildInvite(this.signer, channelId, address, anchorNode);
+
+    // A moderator (anyone but the creator) bundles the creator-signed grant
+    // so nodes that never saw the promotion can still verify its authority.
+    const detail = await this.getChannel(channelId);
+    this.assertSameSigner(signer);
+    const creator = detail?.channel?.creator;
+    if (typeof creator !== 'string' || creator.length === 0) {
+      throw new Error(`channel ${channelId}: creator unknown on this node — cannot build an invite`);
+    }
+    let inviterGrant: Uint8Array | undefined;
+    if (creator !== wallet) {
+      const grant = await this.getModeratorGrant(channelId);
+      this.assertSameSigner(signer);
+      if (grant) {
+        if (!isPlausibleModeratorGrant(grant, channelId, wallet)) {
+          throw new Error('node returned a moderator grant that does not name this wallet for this channel');
+        }
+        inviterGrant = grant;
+      }
+    }
+
+    // `expiresAt` is fixed just before `buildInvite`. `buildEnvelope` then
+    // takes the envelope timestamp with `Date.now()` (before signing), so
+    // timestamp >= this `Date.now()` and `expiresAt = now + ttlMs <=
+    // timestamp + 14d` holds for any ttlMs ≤ the max; `timestamp <
+    // expiresAt` holds because ttlMs ≥ MIN_INVITE_TTL_MS dwarfs the few ms
+    // in between.
+    const expiresAt = Date.now() + ttlMs;
+    const envelope = await buildInvite(signer, channelId, address, anchorNode, { expiresAt, inviterGrant });
+    this.assertSameSigner(signer);
     await this.postEnvelope(`/api/v1/channels/${channelId}/invite/${encodeURIComponent(address)}`, envelope);
+    return { inviteEnvelope: envelope, expiresAt, inviterGrantAttached: inviterGrant !== undefined };
+  }
+
+  /**
+   * GET /api/v1/channels/:channelId/moderators/:address/grant (l2-node
+   * 0.140.0+, authenticated, caller must be `address`) — the creator-signed
+   * `ChannelAddModerator` envelope that made THIS wallet a moderator of
+   * `channelId`, as raw bytes. Returns null on 404 (not a moderator, no grant
+   * on record, or an older node without the endpoint); other errors throw.
+   * Rejects a grant over {@link MAX_INVITER_GRANT_BYTES} or non-base64 data.
+   */
+  async getModeratorGrant(channelId: number): Promise<Uint8Array | null> {
+    const signer = this.signer;
+    if (!signer) throw new Error('Signer required');
+    const wallet = signer.walletAddress ?? signer.address;
+    let resp: { grant_envelope?: unknown } | undefined;
+    try {
+      resp = await this.getAuthenticated<{ grant_envelope?: unknown }>(
+        `/api/v1/channels/${channelId}/moderators/${encodeURIComponent(wallet)}/grant`,
+      );
+    } catch (e: unknown) {
+      if (e instanceof Error && /^API error \(404\)/.test(e.message)) return null;
+      throw e;
+    }
+    const b64 = resp?.grant_envelope;
+    if (typeof b64 !== 'string' || b64.length === 0) return null;
+    if (b64.length > Math.ceil(MAX_INVITER_GRANT_BYTES / 3) * 4) {
+      throw new Error(`moderator grant too large (limit ${MAX_INVITER_GRANT_BYTES} bytes)`);
+    }
+    const bytes = base64ToBytes(b64);
+    if (!bytes || bytes.length === 0) throw new Error('moderator grant is not valid base64');
+    return bytes;
+  }
+
+  /**
+   * Local pre-check of an invite before attaching it to a join/federate:
+   * size cap, decodes as a `ChannelInvite`, same channel, bound to this
+   * signer's wallet. NOT a security check — the node verifies everything.
+   */
+  private precheckInvite(channelId: number, invite: Uint8Array, signer: WalletSigner): void {
+    assertInviteBytes(invite);
+    const inv = decodeChannelInvite(invite);
+    if (!inv) throw new Error('invite is not a valid ChannelInvite envelope');
+    if (inv.channelId !== channelId) throw new Error('invite is for a different channel');
+    const wallet = signer.walletAddress ?? signer.address;
+    if (inv.targetUser !== wallet) throw new Error('invite is addressed to a different account');
+  }
+
+  /**
+   * Throws if `withSigner` swapped the signer while an await was pending —
+   * a write must never go out under (or on behalf of) a different account
+   * than the one that started the operation.
+   */
+  private assertSameSigner(signer: WalletSigner): void {
+    if (this.signer !== signer) throw new Error('account changed during the operation; aborted');
   }
 
   // --- v0.11.0 Message Actions ---

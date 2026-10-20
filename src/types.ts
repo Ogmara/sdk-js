@@ -907,9 +907,93 @@ export interface Notification {
    * Also typed `| null` for the same reason as `channel_name` above.
    */
   anchor_node?: string | null;
+  /**
+   * Standard base64 of the raw, signed `ChannelInvite` envelope, present on
+   * `channel_invite` (l2-node 0.140.0+, private join gate). Attach the decoded
+   * bytes, unchanged, to `joinChannel(id, { invite })` /
+   * `federateChannel(id, host, { invite })` — a Private channel join is
+   * rejected without it. Use `findPendingInvite` / `selectPendingInvite`
+   * rather than reading this by hand.
+   *
+   * The node omits the key when it has no envelope; `| null` is kept
+   * defensively (see `channel_name`), and `getNotifications` normalizes a
+   * wire `null` to an absent key.
+   */
+  invite_envelope?: string | null;
+  /**
+   * Effective expiry of that invite (unix ms), as computed by the node —
+   * a display hint only; the signed envelope is authoritative. Same
+   * omit-when-absent / null-normalized rules as `invite_envelope`.
+   */
+  invite_expires_at?: number | null;
   from: string;
   timestamp: number;
   preview?: string;
+}
+
+/** Options for `OgmaraClient.inviteUser`. */
+export interface InviteUserOptions {
+  /**
+   * Invite validity in ms. Default 7 days (`DEFAULT_INVITE_TTL_MS`); must be
+   * an integer between `MIN_INVITE_TTL_MS` (1 min) and `MAX_INVITE_TTL_MS`
+   * (14 days).
+   */
+  ttlMs?: number;
+}
+
+/** Result of `OgmaraClient.inviteUser`. */
+export interface InviteUserResult {
+  /**
+   * Raw signed `ChannelInvite` envelope — the invitee needs these exact
+   * bytes to join. Feed to `buildPrivateChannelInviteUrl` for a personal link.
+   */
+  inviteEnvelope: Uint8Array;
+  /** Explicit expiry signed into the invite (unix ms). */
+  expiresAt: number;
+  /**
+   * Whether a creator-signed moderator grant was bundled. Always false for
+   * the channel creator (not needed). False for a moderator only when the
+   * node has no grant endpoint / no grant on record (404) — such an invite is
+   * accepted only by nodes that already list the inviter as a moderator.
+   */
+  inviterGrantAttached: boolean;
+}
+
+/** Options for `buildInvite`. Both fields are omitted from the payload when undefined. */
+export interface BuildInviteOptions {
+  /**
+   * Host node URL hint (`anchor_node`). Equivalent to `buildInvite`'s
+   * positional `anchorNode` argument (spec 05 §8.4 form); passing both with
+   * different values throws.
+   */
+  anchorNode?: string;
+  /** Explicit expiry (unix ms). Must be in the future and at most 14 days ahead. */
+  expiresAt?: number;
+  /**
+   * Raw creator-signed `ChannelAddModerator` envelope naming the inviter
+   * (≤ 1024 bytes). Omit when the inviter is the channel creator.
+   */
+  inviterGrant?: Uint8Array;
+}
+
+/** Options for `buildChannelJoin` / `OgmaraClient.joinChannel`. */
+export interface ChannelJoinOptions {
+  /**
+   * Raw signed `ChannelInvite` envelope (≤ 2048 bytes), exactly as received.
+   * Required by l2-node 0.140.0+ to join a Private channel; ignored for
+   * Public/ReadPublic channels.
+   */
+  invite?: Uint8Array;
+}
+
+/** Options for `OgmaraClient.federateChannel`. */
+export interface FederateChannelOptions {
+  /**
+   * Raw signed `ChannelInvite` envelope (≤ 2048 bytes). Required by l2-node
+   * 0.140.0+ unless the caller is already a member or the creator. Sent as
+   * standard base64 in the JSON body's `invite` field.
+   */
+  invite?: Uint8Array;
 }
 
 /** Notifications list response. */

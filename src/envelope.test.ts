@@ -40,16 +40,21 @@ describe('buildInvite', () => {
 });
 
 describe('OgmaraClient.inviteUser — anchor_node population', () => {
-  function mockPostEnvelope(): { bodies: Uint8Array[] } {
+  function mockPostEnvelope(creator: () => string): { bodies: Uint8Array[] } {
     const bodies: Uint8Array[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
         if (init?.body) bodies.push(new Uint8Array(init.body as ArrayBuffer));
         const isHealth = String(url).includes('/api/v1/health');
+        // inviteUser (0.64.0) reads the channel's creator first to decide
+        // whether a moderator grant must be bundled.
+        const isChannel = /\/api\/v1\/channels\/42$/.test(String(url)) && !init?.method;
         const body = isHealth
           ? { status: 'ok', version: '0', peers: 0, node_id: 'node1', network: 'testnet' }
-          : { msg_id: 'x' };
+          : isChannel
+            ? { channel: { channel_id: 42, creator: creator() }, member_count: 1, message_count: 0 }
+            : { msg_id: 'x' };
         return {
           ok: true,
           status: 200,
@@ -67,8 +72,8 @@ describe('OgmaraClient.inviteUser — anchor_node population', () => {
   });
 
   it('sets anchor_node to this node\'s own URL when it is https', async () => {
-    const { bodies } = mockPostEnvelope();
     const signer = await WalletSigner.generate();
+    const { bodies } = mockPostEnvelope(() => signer.address);
     const client = new OgmaraClient({ nodeUrl: 'https://test-node.example' }).withSigner(signer);
 
     await client.inviteUser(42, 'klv1target');
@@ -83,8 +88,8 @@ describe('OgmaraClient.inviteUser — anchor_node population', () => {
     // publicly-routable host, so a local/dev node's URL would only ever
     // produce an unusable value. Confirmed with the SDK's own documented
     // dev example (`http://localhost:41721`).
-    const { bodies } = mockPostEnvelope();
     const signer = await WalletSigner.generate();
+    const { bodies } = mockPostEnvelope(() => signer.address);
     const client = new OgmaraClient({ nodeUrl: 'http://localhost:41721' }).withSigner(signer);
 
     await client.inviteUser(42, 'klv1target');

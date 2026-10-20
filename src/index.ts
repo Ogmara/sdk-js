@@ -114,8 +114,28 @@ export {
   buildDmEdit, buildDmDelete, buildDmReaction,
   buildNewsEdit, buildNewsDelete,
   buildSettingsSync, buildKeyVaultSync, buildReport, buildCounterVote, buildDeviceRevocation,
-  buildDeletionRequest,
+  buildDeletionRequest, buildInvite,
 } from './envelope';
+// Private-channel join gate (l2-node 0.140.0+): invite decoding (UNVERIFIED,
+// UI only), pending-invite selection, personal invite links, size/TTL limits.
+export {
+  DEFAULT_INVITE_TTL_MS,
+  MAX_INVITE_TTL_MS,
+  MIN_INVITE_TTL_MS,
+  MAX_INVITE_ENVELOPE_BYTES,
+  MAX_INVITER_GRANT_BYTES,
+  INVITE_EXPIRY_MARGIN_MS,
+  INVITE_FUTURE_TOLERANCE_MS,
+  DEFAULT_INVITE_LINK_BASE,
+  decodeChannelInvite,
+  selectPendingInvite,
+  encodeInviteForUrl,
+  decodeInviteFromUrl,
+  buildPrivateChannelInviteUrl,
+  bytesToBase64,
+  base64ToBytes,
+} from './invite';
+export type { DecodedChannelInvite, PendingInvite } from './invite';
 export {
   VAULT_SIGN_CLAIM,
   VAULT_FORMAT_VERSION,

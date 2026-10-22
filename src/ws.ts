@@ -247,6 +247,15 @@ export class WsSubscription {
                     dm_sync_signature: headers['x-ogmara-dmsync-auth'],
                   }
                 : {}),
+              // Private-channel-sync backfill authorization (l2-node
+              // 0.142.0+; wallet-direct or device-signed form, see
+              // `buildPrivateChannelSyncAuthClaim`). Older nodes ignore it.
+              ...(headers['x-ogmara-pchansync-auth-timestamp'] && headers['x-ogmara-pchansync-auth']
+                ? {
+                    pchansync_timestamp: parseInt(headers['x-ogmara-pchansync-auth-timestamp']),
+                    pchansync_signature: headers['x-ogmara-pchansync-auth'],
+                  }
+                : {}),
             });
           } catch (err) {
             // Surface WHY auth failed instead of silently looping (this was the

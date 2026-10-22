@@ -134,7 +134,8 @@ function bech32HrpExpand(hrp: string): number[] {
 /**
  * Decode a bech32 address (`klv1…`/`ogd1…`) to its 32-byte Ed25519 public key.
  *
- * Verifies the BIP-173 checksum and enforces a 32-byte result. Previously
+ * Verifies the HRP (exactly `klv` or `ogd`), the BIP-173 checksum, and a
+ * 32-byte result. Previously
  * this decoded bech32 *characters* positionally without checking either —
  * a single mistyped character in the data portion silently produced a
  * different, still-32-byte "valid-looking" key instead of throwing (audit
@@ -146,6 +147,9 @@ export function addressToPubkey(address: string): Uint8Array {
   const sep = address.lastIndexOf('1');
   if (sep < 1 || sep + 7 > address.length) throw new Error('not a bech32 address');
   const hrp = address.slice(0, sep);
+  // Exact HRP, like the node's `address_to_pubkey_bytes`: only a wallet
+  // (`klv`) or a device (`ogd`) key is an Ogmara identity. Lowercase only.
+  if (hrp !== 'klv' && hrp !== 'ogd') throw new Error(`unsupported address prefix '${hrp}'`);
   const values: number[] = [];
   for (const c of address.slice(sep + 1)) {
     const v = BECH32_CHARSET.indexOf(c);

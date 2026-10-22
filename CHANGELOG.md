@@ -5,6 +5,207 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0] - 2026-10-21
+
+Private-channel "verify before cover" (l2-node 0.142.0+, protocol §3.9.1
+Phase 2): before wrapping a private channel's key to the other members, a
+client fetches each member's raw signed membership evidence from its node and
+re-verifies it locally, so a node can no longer get a key wrapped to a wallet
+it merely CLAIMS is a member. Additive; nodes before 0.142.0 answer the new
+endpoint with 404, which surfaces as a `MemberProofsError` (fail closed).
+This release also ships the 0.65.0 work below (0.65.0 was never published on
+its own).
+
+**Integrator guidance — pin the creator.** Whenever you passed no
+`pinnedCreator`, persist the returned `creator` (whatever its `creatorSource`)
+and pass it as `pinnedCreator` on every later call; a pin always wins over
+whatever `ChannelCreate` a node serves. Best of all, pin it from the client's
+own first contact with the channel (when it joined or was invited): the id
+derivation is only a ~53-bit binding (`% (2^53 - 1)`), so it raises the cost
+of forging a creator for one specific channel to ~2^53 hashes rather than
+making it infeasible — the persisted pin is the real defense. Set
+`allowUnderivedCreator` only when the client's OWN stored `ChannelCreate` for
+that channel carries no derivation, never because a node served one.
+
+### Added
+
+- **`verifyPrivateMemberProof(bundle, ctx)`** (`src/privateChannelProof.ts`)
+  — the node's `verify_private_join` rules 4-8 with sync semantics, run
+  client-side against untrusted evidence. Creator root of trust:
+  `ctx.pinnedCreator` when set (always wins; a create naming anyone else →
+  `creator_pin_mismatch`), else a genuine, Private `ChannelCreate` for this id
+  whose `Keccak-256(wallet + slug + id_derivation_ts) % (2^53-1)` names the
+  resolved signer. A create WITHOUT a derivation (pre-0.139) is refused
+  (`creator_not_derived`) unless the caller sets `ctx.allowUnderivedCreator`
+  for a channel it already knew before 0.139 — then `creatorSource:
+  'first_seen'` (trust on first use). Join: genuine, signed
+  by the wallet or a device delegated to it at the join's time, for this
+  channel; invite: genuine `ChannelInvite` ≤ 2048 B, right channel and
+  target, `invite.ts <= join.ts + 5 min`, `join.ts <= expiry` (7-day default,
+  14-day cap); inviter = creator, or a moderator with a creator-signed
+  `ChannelAddModerator` (embedded, else `moderator_grants`) dated
+  `<= invite.ts` and not killed by a creator-signed `ChannelRemoveModerator`
+  with `grant.ts < m <= invite.ts`. Removal cutoff: a verified Kick/Ban (by
+  the creator or a moderator valid at the removal's time) at/after the invite
+  or the join kills it; a relevant removal whose authority cannot be proven
+  fails closed. Proofless (legacy) joins are accepted only when
+  `join.ts < activationMs` (testnet `1793491200000`, mainnet always 0).
+  `unavailable` members (`truncated`, `oversized_evidence`, `no_join`,
+  `not_member`) always fail. Removals dated before the invite/join are skipped
+  without signature work; a per-response verification budget
+  (`MAX_VERIFICATIONS_PER_RESPONSE`, 2000; `verificationBudget` can lower it,
+  never raise it)
+  fails every not-yet-decided member closed once spent. Every evidence item
+  is size-checked (16 KiB; base64 length first) before any decode. Never
+  throws.
+- **`verifyEnvelopeBytes(raw, network, { expectedType?, maxBytes? })`** —
+  structure, version 2, exact type, size cap, recomputed network-bound
+  msg_id, and the signature in both the plain Ogmara and the Klever-message
+  wrapped form. Claim-signed types (DeviceDelegation, DeviceEncBinding,
+  DeviceEncRevoke) are refused; embedded slots accept exactly one type, so
+  nothing nests beyond join → invite → grant.
+- **`verifyDeviceClaimObject` / `verifyDeviceClaim` / `deviceClaimCovers`**
+  — the served device-claim object: `device_address == bech32("ogd",
+  device_pubkey)`, each delegation signed by the wallet AND the device over
+  `ogmara-device-claim:{network}:{pubhex}:{wallet}:{ts}`, ≤ 4 delegations /
+  revocations, and the W4 window (some delegation `d <= ts`, no revocation
+  `d <= R <= ts`; revocations are honoured unsigned — that only fails
+  closed).
+- **`verifyEncKeyBinding(record, wallet, network)`** — checks a `bound: true`
+  enc-key row's wallet signature over
+  `ogmara-enc-bind:{network}:{enc_pub}:{device_id}:{wallet}:{ts}`; returns
+  `bound` / `unbound` (pre-0.142.0 row: trust with a warning until re-bound)
+  / `invalid` (never wrap to it).
+- **`filterVerifiedMembers(client, channelId, wallets, cache, options?)`** —
+  fetches proofs, verifies, returns `{ verified, rejected, creator,
+  creatorSource, incomplete }`. Invalid addresses are never sent (the node
+  would 400 the whole batch); `truncated` members are re-requested once in
+  smaller batches; a failed fetch rejects the affected wallets with
+  `incomplete: true` instead of throwing. The first chunk's established
+  creator is pinned for every later chunk (and the re-request), so different
+  batches can never establish different creators (`creator_pin_mismatch`).
+  `creatorSource` reports how that FIRST chunk established it — `pinned` only
+  when the caller passed `pinnedCreator`. **`MemberProofCache`** — LRU of
+  POSITIVE verdicts keyed (network, channel, creator, wallet, join msg_id);
+  negatives are always re-checked, a hit still re-checks the member's
+  removals and the node's current basis. `options.seenRemovals`
+  (`Map<wallet, ts>`) is read as an extra cutoff and updated with every
+  verified removal — persist it per wallet scope.
+- **`OgmaraClient.getMemberProofs(channelId, addresses)`** —
+  `POST /api/v1/channels/{id}/member-proofs`, deduplicated, chunks of ≤ 100
+  sent sequentially (one build per wallet in flight on the node), each
+  response capped at 8 MiB (`MAX_MEMBER_PROOFS_RESPONSE_BYTES`). Throws
+  **`MemberProofsError`** (`status`; `retryable` for 429, 503 and 0 =
+  network/timeout/malformed or oversized response).
+- Types: `MemberProofsResponse`, `MemberProofEntry`, `DeviceClaimObject`;
+  `DeviceEncKeyRecord` gains `ts`, `revoked`, `bound`, `wallet_signature`
+  (as served by `getEncKeys` from l2-node 0.142.0).
+- Constants/helpers: `legacyJoinActivationMs(network)`,
+  `TESTNET_LEGACY_JOIN_ACTIVATION_MS`, `MAX_TIMESTAMP_DRIFT_MS`,
+  `MAX_EVIDENCE_BYTES`, `MAX_MEMBER_PROOF_ADDRESSES`,
+  `MAX_MEMBER_PROOFS_RESPONSE_BYTES`, `MAX_VERIFICATIONS_PER_RESPONSE`.
+- `boundedText` / `boundedJson` take an optional `maxBytes` (default
+  `MAX_RESPONSE_BYTES`, unchanged).
+- Tests: parity over every case of the node's golden vectors
+  (`fixtures/phase2-vectors.json`, a byte-identical copy of l2-node
+  `tests/fixtures/phase2/vectors.json`; a test fails on drift when the
+  sibling checkout is present), plus bit-flip, swapped-target,
+  wrong-network/channel, nested-envelope, oversize, pin-mismatch,
+  forged-create, demotion-timing, removal-authority, cache and fetch-failure
+  cases, and reason-asserting tests for each rule boundary (derivation,
+  grant target, join/create channel, create type, invite size, mainnet
+  activation, `<` activation boundary, removal between join and a later
+  invite).
+
+### Changed
+
+- **`addressToPubkey`** accepts only the `klv` and `ogd` prefixes (exactly,
+  like the node); any other HRP throws even with a valid checksum.
+- **`OgmaraClient.federateChannel`** signs and posts with the signer captured
+  at the start of the call, and aborts (`account changed during the
+  operation`) if the client's signer changes at any point before the request
+  is sent — including during the node-binding and header-signing awaits.
+  (0.65.0 only checked once, before those awaits.)
+
+### Security
+
+- Closes key-wrap **forgery** by a node (a node can no longer make a client
+  cover a wallet without genuine creator/moderator-authorized evidence),
+  including a creator downgrade: an attacker-signed `ChannelCreate` without
+  an id derivation no longer establishes a creator by default.
+- `npm audit fix` (no `--force`, lockfile only): `vitest` / `@vitest/mocker`
+  5.0.0 → 5.0.5 (GHSA-qxg6-89mg-rqv8, GHSA-xp26-3454-mjgp — manual-mock code
+  injection / Windows path-traversal bypass), pulling `vite` 8.3.5 and other
+  vitest transitives. Dev/test tooling only, not in the shipped package; the
+  runtime dependencies are unchanged. `npm audit`: 0 vulnerabilities.
+- A hostile node can make any member fail closed — by withholding their
+  evidence, or by padding a response until the verification budget runs out
+  — which gives it no new power: it could always simply omit that member.
+- Honest limitations (residual W3 — *narrowed, not closed*):
+  - The verifier has no clock dependence; it judges a join only by the
+    signed timestamps in the evidence. A node that **withholds** a Kick/Ban
+    keeps an old, once-valid join covered **indefinitely** (not merely for
+    the invite's TTL). `seenRemovals` carries removals seen from any node
+    across calls and narrows this.
+  - `ChannelLeave` is never considered: a node can keep listing — and so get
+    a client to cover — a member who has left, as long as their join
+    verifies.
+  - Testnet legacy (proofless) joins count whenever their signed timestamp is
+    before the activation constant, so they can be backdated indefinitely by
+    design; mainnet forces activation 0 (no legacy path).
+  - Pre-0.139 channels (opt-in only) rely on trust on first use of the
+    creator. Enc-key rows bound before l2-node 0.142.0 carry no signature
+    (`unbound`) until the device re-binds.
+
+## [0.65.0] - 2026-10-21 — not published separately; shipped in 0.66.0
+
+Client half of the private-channel-sync ("pchansync") backfill claim
+(l2-node 0.142.0): every authenticated request and the WS auth frame now
+carry a claim that authorizes the target node to backfill the caller's
+private channels from peers. Additive — nodes before 0.142.0 ignore the
+headers/fields; the private-channel member-proof verifier follows in 0.66.0.
+
+### Added
+
+- **`buildPrivateChannelSyncAuthClaim(nodeId, wallet, network, timestamp?, devicePubkeyHex?)`**
+  — builds the claim string. Wallet-direct form (signed by the wallet key):
+  `ogmara-private-channel-sync-auth:{network}:{nodeId}:{wallet}:{ts}`.
+  Device-signed form (signed by the delegated device key, for extension /
+  K5 accounts):
+  `ogmara-private-channel-sync-device-auth:{network}:{nodeId}:{wallet}:{device_pubkey_hex}:{ts}`.
+  Byte-identical to l2-node `private_channel_sync::build_wallet_auth_claim` /
+  `build_device_auth_claim`; parity is pinned by tests against the node's
+  golden vectors (`tests/fixtures/phase2/vectors.json`).
+- **`WalletSigner.signRequest`** attaches `x-ogmara-pchansync-auth-timestamp`
+  (unix ms) + `x-ogmara-pchansync-auth` (standard base64, 64-byte signature)
+  next to the dm-sync headers; new optional `AuthHeaders` fields. A
+  wallet-direct signer signs the wallet-direct form; a delegated-device
+  signer (`walletAddress` set) signs the device form with its OWN key — no
+  wallet-extension signature prompt is ever triggered. The node accepts the
+  device form only with a wallet-signed delegation proof it already holds
+  and otherwise ignores it. Nothing is sent when the binding has no
+  `network`/`nodeId`.
+- Claims are cached per signer instance, keyed `${network}:${nodeId}`, with
+  a 4-minute TTL (node window ±300 s); re-signed when the signer's
+  `walletAddress` changes. Never shared across signers, so an account switch
+  (new `WalletSigner`) never sends the previous account's claim.
+- **WS auth frame** — `pchansync_timestamp` (number) and
+  `pchansync_signature` (standard base64) when the signer produced a claim.
+
+### Changed
+
+- **`OgmaraClient.federateChannel`** asserts the signer captured at the start
+  of the call is still the client's signer before posting. (Superseded in
+  0.66.0: that single check ran before the header-signing awaits; 0.66.0
+  signs with the captured signer and re-checks before sending.)
+
+### Security
+
+- `npm audit fix` (no `--force`, lockfile only): `vite` 8.3.0 → 8.3.5
+  (GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, GHSA-587h-7wmj-h5pm via
+  `launch-editor`). Dev/test tooling only (transitive of `vitest`), not in
+  the shipped package. `npm audit`: 0 vulnerabilities.
+
 ## [0.64.0] - 2026-10-20
 
 Client half of the private-channel join gate (l2-node 0.140.0): every

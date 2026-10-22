@@ -29,6 +29,15 @@ export interface AuthHeaders {
    */
   'x-ogmara-dmsync-auth-timestamp'?: string;
   'x-ogmara-dmsync-auth'?: string;
+  /**
+   * Private-channel-sync backfill authorization (sdk-js 0.65.0, l2-node
+   * 0.142.0+): unix-ms timestamp of the claim. Present for wallet-direct
+   * signers AND delegated-device signers (device-signed form); see
+   * `buildPrivateChannelSyncAuthClaim`. Older nodes ignore it.
+   */
+  'x-ogmara-pchansync-auth-timestamp'?: string;
+  /** Standard-base64 64-byte Ed25519 (Klever message) signature of the pchansync claim. */
+  'x-ogmara-pchansync-auth'?: string;
 }
 
 /**
@@ -197,7 +206,11 @@ export class WalletSigner {
       'x-ogmara-timestamp': timestamp.toString(),
       'x-ogmara-nonce': nonce,
     };
-    return { ...base, ...(await this.getDmSyncClaimHeaders(binding)) };
+    return {
+      ...base,
+      ...(await this.getDmSyncClaimHeaders(binding)),
+      ...(await this.getPchanSyncClaimHeaders(binding)),
+    };
   }
 
   /**
@@ -352,6 +365,66 @@ export class WalletSigner {
       'x-ogmara-dmsync-auth': cached.signature,
     };
   }
+
+  /**
+   * Cached private-channel-sync claims (sdk-js 0.65.0), keyed
+   * `${network}:${nodeId}` — one claim per target node, re-signed per node.
+   * Instance-private: a claim is never shared across signers (each account
+   * switch builds a new `WalletSigner`, so it starts with an empty cache).
+   * `wallet`/`device` record which form the entry was signed for, so a
+   * later change of `walletAddress` on this same instance re-signs instead
+   * of replaying a claim bound to the previous wallet.
+   */
+  private pchanSyncClaims = new Map<
+    string,
+    { timestamp: number; signature: string; wallet: string; device: boolean }
+  >();
+
+  /**
+   * Build (and cache, 4-minute TTL — same as the dm-sync claim, under the
+   * node's 300 s window) the private-channel-sync authorization headers for
+   * `binding`.
+   *
+   * * Wallet-direct signer (no `walletAddress`): the wallet key signs the
+   *   wallet-direct form.
+   * * Delegated-device signer (`walletAddress` set — extension / K5
+   *   accounts): THIS device key (the same key that signs `X-Ogmara-Auth`)
+   *   signs the device form for `walletAddress`. No wallet-extension prompt
+   *   is ever involved; the node pairs the device signature with a
+   *   wallet-signed delegation proof it already holds and ignores the claim
+   *   when it has none.
+   *
+   * Returns `{}` when the binding lacks a `network`/`nodeId` — a claim bound
+   * to an empty node identity would be useless and is never sent.
+   */
+  private async getPchanSyncClaimHeaders(binding: NodeBinding): Promise<Partial<AuthHeaders>> {
+    if (!binding?.network || !binding?.nodeId) return {};
+    const device = this.walletAddress !== undefined && this.walletAddress !== '';
+    const wallet = device ? this.walletAddress! : this.address;
+    const key = `${binding.network}:${binding.nodeId}`;
+    let cached = this.pchanSyncClaims.get(key);
+    if (
+      !cached ||
+      cached.wallet !== wallet ||
+      cached.device !== device ||
+      Date.now() - cached.timestamp > WalletSigner.DM_SYNC_CLAIM_TTL_MS
+    ) {
+      const { claimString, timestamp } = buildPrivateChannelSyncAuthClaim(
+        binding.nodeId,
+        wallet,
+        binding.network,
+        undefined,
+        device ? this.publicKeyHex : undefined,
+      );
+      const sig = await this.signKleverMessage(new TextEncoder().encode(claimString));
+      cached = { timestamp, signature: btoa(String.fromCharCode(...sig)), wallet, device };
+      this.pchanSyncClaims.set(key, cached);
+    }
+    return {
+      'x-ogmara-pchansync-auth-timestamp': cached.timestamp.toString(),
+      'x-ogmara-pchansync-auth': cached.signature,
+    };
+  }
 }
 
 /**
@@ -418,6 +491,60 @@ export function buildDmSyncAuthClaim(
   const ts = timestamp ?? Date.now();
   return {
     claimString: `ogmara-dm-sync-auth:${network}:${nodeId}:${wallet}:${ts}`,
+    timestamp: ts,
+  };
+}
+
+/**
+ * Build a private-channel-sync authorization claim string (sdk-js 0.65.0,
+ * l2-node 0.142.0+): proves `wallet` authorized `nodeId` SPECIFICALLY to
+ * backfill its private channels on its behalf. Sent as the
+ * `x-ogmara-pchansync-auth-timestamp` / `x-ogmara-pchansync-auth` REST
+ * headers and the WS auth frame's `pchansync_timestamp` /
+ * `pchansync_signature` fields; signed with Klever message signing.
+ *
+ * Two forms (the node picks; nothing on the wire says which):
+ * * **wallet-direct** (`devicePubkeyHex` omitted) — signed by the WALLET key:
+ *   `ogmara-private-channel-sync-auth:{network}:{nodeId}:{wallet}:{ts}`
+ * * **device-signed** (`devicePubkeyHex` given) — signed by the delegated
+ *   DEVICE key that also signs the request's `X-Ogmara-Auth`:
+ *   `ogmara-private-channel-sync-device-auth:{network}:{nodeId}:{wallet}:{devicePubkeyHex}:{ts}`
+ *   where `wallet` is the klv1 wallet the device is delegated to. The node
+ *   accepts it only with a wallet-signed delegation proof for that device.
+ *
+ * Distinct domain prefixes from `buildDmSyncAuthClaim`, so a dm-sync claim
+ * never verifies as a pchansync claim or the reverse. Mirrors
+ * `private_channel_sync::build_wallet_auth_claim` /
+ * `build_device_auth_claim` (l2-node) — they must never drift apart.
+ *
+ * @param nodeId - Target node's Ogmara `node_id` (from `NodeBinding`)
+ * @param wallet - Wallet's klv1... address
+ * @param network - Target node's Klever network ("testnet"/"mainnet")
+ * @param timestamp - Unix timestamp in milliseconds (defaults to Date.now())
+ * @param devicePubkeyHex - Device Ed25519 public key (64 hex chars) for the
+ *   device-signed form; lowercased. Omit for the wallet-direct form.
+ */
+export function buildPrivateChannelSyncAuthClaim(
+  nodeId: string,
+  wallet: string,
+  network: string,
+  timestamp?: number,
+  devicePubkeyHex?: string,
+): { claimString: string; timestamp: number } {
+  const ts = timestamp ?? Date.now();
+  if (devicePubkeyHex === undefined) {
+    return {
+      claimString: `ogmara-private-channel-sync-auth:${network}:${nodeId}:${wallet}:${ts}`,
+      timestamp: ts,
+    };
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(devicePubkeyHex)) {
+    throw new Error('devicePubkeyHex must be 64 hex characters');
+  }
+  return {
+    claimString:
+      `ogmara-private-channel-sync-device-auth:${network}:${nodeId}:${wallet}:` +
+      `${devicePubkeyHex.toLowerCase()}:${ts}`,
     timestamp: ts,
   };
 }

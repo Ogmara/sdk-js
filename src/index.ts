@@ -26,7 +26,13 @@
  */
 
 export { OgmaraClient } from './client';
-export { WalletSigner, buildDeviceClaim, buildDmSyncAuthClaim, randomNonceHex } from './auth';
+export {
+  WalletSigner,
+  buildDeviceClaim,
+  buildDmSyncAuthClaim,
+  buildPrivateChannelSyncAuthClaim,
+  randomNonceHex,
+} from './auth';
 export type { ExternalSigner, AuthHeaders, NodeBinding } from './auth';
 export {
   generateDeviceEncKeypair,
@@ -94,6 +100,43 @@ export {
 export type { MediaDescriptor, EncryptedFile } from './media';
 export { solveChallenge, solveChallengeAsync } from './pow';
 export { derivePrivateChannelId } from './channelId';
+// Private-channel "verify before cover" (sdk-js 0.66.0, l2-node 0.142.0+):
+// client-side verification of member-proofs evidence before wrapping a
+// channel key to a member, plus device-claim and enc-key-binding verifiers.
+export {
+  verifyEnvelopeBytes,
+  verifyDeviceClaim,
+  verifyDeviceClaimObject,
+  deviceClaimCovers,
+  verifyEncKeyBinding,
+  verifyPrivateMemberProof,
+  memberProofBundle,
+  filterVerifiedMembers,
+  legacyJoinActivationMs,
+  MemberProofCache,
+  MemberProofsError,
+  TESTNET_LEGACY_JOIN_ACTIVATION_MS,
+  MAX_TIMESTAMP_DRIFT_MS,
+  MAX_EVIDENCE_BYTES,
+  MAX_MEMBER_PROOF_ADDRESSES,
+  MAX_MEMBER_PROOFS_RESPONSE_BYTES,
+  MAX_VERIFICATIONS_PER_RESPONSE,
+} from './privateChannelProof';
+export type {
+  VerifiedEnvelope,
+  EnvelopeVerification,
+  VerifyEnvelopeOptions,
+  VerifiedDeviceClaim,
+  DeviceClaimObjectVerification,
+  EncKeyBindingVerdict,
+  PrivateMemberProofBundle,
+  PrivateMemberProofContext,
+  PrivateMemberProofResult,
+  CreatorSource,
+  SeenRemovals,
+  FilterVerifiedMembersOptions,
+  FilterVerifiedMembersResult,
+} from './privateChannelProof';
 export type { PrivateChannelIdDerivation } from './channelId';
 
 // Bot command parsing (protocol §3.3, §3.11). `parseCommand` is the bot

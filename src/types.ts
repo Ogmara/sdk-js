@@ -1262,6 +1262,76 @@ export interface DeviceEncKeyRecord {
   device_id: string;
   /** Unix ms when the binding was authorized. */
   created_at: number;
+  /** Signed timestamp of the binding (the `{ts}` of the bind claim). */
+  ts?: number;
+  /** Always false in served rows (tombstones are not served). */
+  revoked?: boolean;
+  /**
+   * l2-node 0.142.0+: `true` when the row carries the wallet's
+   * `wallet_signature` over
+   * `ogmara-enc-bind:{network}:{enc_pub}:{device_id}:{wallet}:{ts}` — verify it
+   * with `verifyEncKeyBinding` before wrapping a key to it. `false` = bound
+   * before 0.142.0 (no signature retained); absent = an older node.
+   */
+  bound?: boolean;
+  /** Standard base64, 64 bytes; present only when `bound` is true. */
+  wallet_signature?: string;
+}
+
+/**
+ * A device-claim object served in `member-proofs` `device_claims` (l2-node
+ * 0.142.0, plan §6). Built ONLY from stored dual-signed `DeviceDelegation`
+ * envelopes. UNVERIFIED as received — see `verifyDeviceClaimObject`.
+ */
+export interface DeviceClaimObject {
+  /** `ogd1…` address of the device. */
+  device_address: string;
+  /** 64 lowercase hex chars — the device's Ed25519 public key. */
+  device_pubkey: string;
+  /** The `klv1…` wallet that delegated the device. */
+  wallet: string;
+  /** ≤ 4 newest delegations, each signed by the wallet AND the device. */
+  delegations: { timestamp: number; wallet_signature: string; device_signature: string }[];
+  /** ≤ 4 newest raw `DeviceRevocation` envelopes naming the device (standard base64). */
+  revocations: string[];
+}
+
+/** One member's entry in a `member-proofs` response. */
+export interface MemberProofEntry {
+  address: string;
+  /** Whether the node holds a membership row for the address. */
+  member: boolean;
+  basis: 'creator' | 'invite' | 'legacy' | 'unavailable';
+  /** Why `unavailable`: `not_member`, `no_join`, `oversized_evidence` or `truncated`. */
+  reason: string | null;
+  /** Standard base64 raw newest `ChannelJoin`. */
+  join: string | null;
+  /** ≤ 16 newest Kick/Ban envelopes targeting the address (standard base64). */
+  removals: string[];
+  /** Resolved author of the join's embedded invite (a hint — the verifier resolves it itself). */
+  inviter: string | null;
+}
+
+/**
+ * Response of `POST /api/v1/channels/{id}/member-proofs` (l2-node 0.142.0).
+ * Every envelope is raw, signed evidence the client re-verifies with
+ * `verifyPrivateMemberProof` — the node vouches for nothing.
+ */
+export interface MemberProofsResponse {
+  channel_id: number;
+  /** The node's creator hint (not trusted — the verifier derives it from `channel_create`). */
+  creator: string | null;
+  /** Standard base64 raw `ChannelCreate`. */
+  channel_create: string | null;
+  /** True when the evidence budget ran out; members from that point are `unavailable`/`truncated`. */
+  truncated: boolean;
+  members: MemberProofEntry[];
+  /** Creator-signed `ChannelAddModerator` envelopes per moderator (≤ 4 newest). */
+  moderator_grants: Record<string, string[]>;
+  /** `ChannelRemoveModerator` envelopes per inviter (≤ 16 newest). */
+  moderator_removals: Record<string, string[]>;
+  /** Device-claim objects keyed by device address. */
+  device_claims: Record<string, DeviceClaimObject>;
 }
 
 /** Response from `GET /api/v1/users/{address}/enc-keys`. */

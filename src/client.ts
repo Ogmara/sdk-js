@@ -152,7 +152,13 @@ import type {
   InviteUserResult,
   ChannelJoinOptions,
   FederateChannelOptions,
+  MemberProofsResponse,
 } from './types';
+import {
+  MemberProofsError,
+  MAX_MEMBER_PROOF_ADDRESSES,
+  MAX_MEMBER_PROOFS_RESPONSE_BYTES,
+} from './privateChannelProof';
 
 /**
  * Spec 5 §1.1 trust score derivation (locked in spec 13 §10.8 /
@@ -204,10 +210,10 @@ export const MAX_RESPONSE_BYTES = 100 * 1024 * 1024; // 100 MB
  * to a single bounded `resp.text()` read plus a post-hoc length check
  * otherwise — still caught, just after one full read rather than mid-stream.
  */
-export async function boundedText(resp: Response): Promise<string> {
+export async function boundedText(resp: Response, maxBytes: number = MAX_RESPONSE_BYTES): Promise<string> {
   const declaredLen = resp.headers.get('content-length');
-  if (declaredLen && Number(declaredLen) > MAX_RESPONSE_BYTES) {
-    throw new Error(`response too large (${declaredLen} bytes, limit ${MAX_RESPONSE_BYTES})`);
+  if (declaredLen && Number(declaredLen) > maxBytes) {
+    throw new Error(`response too large (${declaredLen} bytes, limit ${maxBytes})`);
   }
   const body = resp.body as ReadableStream<Uint8Array> | null;
   if (body && typeof body.getReader === 'function') {
@@ -219,9 +225,9 @@ export async function boundedText(resp: Response): Promise<string> {
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
-      if (total > MAX_RESPONSE_BYTES) {
+      if (total > maxBytes) {
         await reader.cancel().catch(() => {});
-        throw new Error(`response too large (exceeds ${MAX_RESPONSE_BYTES}-byte limit)`);
+        throw new Error(`response too large (exceeds ${maxBytes}-byte limit)`);
       }
       chunks.push(value);
     }
@@ -234,15 +240,18 @@ export async function boundedText(resp: Response): Promise<string> {
     return new TextDecoder().decode(combined);
   }
   const text = await resp.text();
-  if (text.length > MAX_RESPONSE_BYTES) {
-    throw new Error(`response too large (${text.length} bytes, limit ${MAX_RESPONSE_BYTES})`);
+  if (text.length > maxBytes) {
+    throw new Error(`response too large (${text.length} bytes, limit ${maxBytes})`);
   }
   return text;
 }
 
-/** Parse a `Response` body as JSON, subject to the same {@link boundedText} cap. */
-export async function boundedJson(resp: Response): Promise<any> {
-  const text = await boundedText(resp);
+/**
+ * Parse a `Response` body as JSON, subject to the same {@link boundedText} cap
+ * (`maxBytes`, default {@link MAX_RESPONSE_BYTES}).
+ */
+export async function boundedJson(resp: Response, maxBytes: number = MAX_RESPONSE_BYTES): Promise<any> {
+  const text = await boundedText(resp, maxBytes);
   return text ? JSON.parse(text) : undefined;
 }
 
@@ -935,7 +944,13 @@ export class OgmaraClient {
       this.precheckInvite(channelId, options.invite, signer);
       body.invite = bytesToBase64(options.invite);
     }
-    return this.postJson(`/api/v1/channels/${channelId}/federate`, body);
+    // The node binds the federated membership (and the pchansync claim the
+    // auth headers carry) to the caller's wallet: the request is signed with
+    // the signer CAPTURED above (whose invite was pre-checked), and aborted if
+    // the client's account changed at any point before it is sent — including
+    // during the node-binding / header-signing awaits inside postJson.
+    this.assertSameSigner(signer);
+    return this.postJson(`/api/v1/channels/${channelId}/federate`, body, signer);
   }
 
   /**
@@ -1760,6 +1775,88 @@ export class OgmaraClient {
   }
 
   /**
+   * POST /api/v1/channels/{id}/member-proofs (l2-node 0.142.0+) — the raw,
+   * signed evidence behind each listed wallet's membership of PRIVATE channel
+   * `channelId`, for client-side verification ("verify before cover", see
+   * `verifyPrivateMemberProof` / `filterVerifiedMembers`). Nothing in the
+   * response is trusted until verified.
+   *
+   * Addresses are deduplicated and sent in chunks of ≤ 100, SEQUENTIALLY (the
+   * node allows one build per wallet in flight); one response per chunk, in
+   * order. Throws {@link MemberProofsError} on any non-2xx (403 non-member or
+   * unknown channel, 400 not private / bad address, 404 node older than
+   * 0.142.0, 429 per-wallet limit or a build in flight, 503 node busy — the
+   * last two `retryable`) or a malformed response; callers fail CLOSED.
+   * Authenticated.
+   */
+  async getMemberProofs(channelId: number, addresses: readonly string[]): Promise<MemberProofsResponse[]> {
+    if (!Number.isSafeInteger(channelId) || channelId <= 0) {
+      throw new MemberProofsError(400, 'channelId must be a positive safe integer');
+    }
+    const unique = [...new Set(addresses)];
+    if (unique.length === 0) return [];
+    const out: MemberProofsResponse[] = [];
+    for (let i = 0; i < unique.length; i += MAX_MEMBER_PROOF_ADDRESSES) {
+      out.push(await this.postMemberProofs(channelId, unique.slice(i, i + MAX_MEMBER_PROOF_ADDRESSES)));
+    }
+    return out;
+  }
+
+  private async postMemberProofs(channelId: number, addresses: string[], powRetried = false): Promise<MemberProofsResponse> {
+    if (!this.signer) throw new Error('Signer required');
+    const path = `/api/v1/channels/${channelId}/member-proofs`;
+    const headers = await this.authHeaders('POST', path);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    let resp: Response;
+    try {
+      try {
+        resp = await fetch(`${this.nodeUrl}${path}`, {
+          method: 'POST',
+          headers: { ...headers, 'content-type': 'application/json' },
+          body: JSON.stringify({ addresses }),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      } catch (e) {
+        throw new MemberProofsError(0, `member-proofs request failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (resp.status === 429 && !this.powVerified && !powRetried) {
+        const body = await boundedJson(resp).catch(() => null);
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
+          return this.postMemberProofs(channelId, addresses, true);
+        }
+        throw new MemberProofsError(429, 'member-proofs rate limited');
+      }
+      if (!resp.ok) {
+        const text = await boundedText(resp).catch(() => '');
+        throw new MemberProofsError(resp.status, `member-proofs API error (${resp.status}): ${text.slice(0, 200)}`);
+      }
+      // The node's own evidence budget is ~2 MiB per response; 8 MiB bounds a
+      // hostile or broken node long before JSON.parse / base64 work starts.
+      let body: any;
+      try {
+        body = await boundedJson(resp, MAX_MEMBER_PROOFS_RESPONSE_BYTES);
+      } catch (e) {
+        const tooLarge = e instanceof Error && /too large/.test(e.message);
+        throw new MemberProofsError(
+          0,
+          tooLarge
+            ? `member-proofs: response too large (limit ${MAX_MEMBER_PROOFS_RESPONSE_BYTES} bytes)`
+            : 'member-proofs: malformed response',
+        );
+      }
+      if (!body || typeof body !== 'object' || !Array.isArray(body.members)) {
+        throw new MemberProofsError(0, 'member-proofs: malformed response');
+      }
+      return body as MemberProofsResponse;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
    * Publish a wallet-authored `DeviceEncBinding`/`DeviceEncRevoke` envelope
    * (build it with `buildDeviceEncBinding` / `buildDeviceEncRevoke`). The
    * envelope's wallet signature is the authority; the HTTP request is
@@ -2083,10 +2180,18 @@ export class OgmaraClient {
     }
   }
 
-  /** POST with JSON body (for non-envelope endpoints like device registration). */
-  private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    if (!this.signer) throw new Error('Signer required');
-    const headers = await this.authHeaders('POST', path);
+  /**
+   * POST with JSON body (for non-envelope endpoints like device registration).
+   * With `signer`, the request is signed by THAT signer (not whatever
+   * `this.signer` is by then) and aborted if the client's signer changed
+   * during the await for the headers.
+   */
+  private async postJson<T>(path: string, body: Record<string, unknown>, signer?: WalletSigner): Promise<T> {
+    const s = signer ?? this.signer;
+    if (!s) throw new Error('Signer required');
+    const binding = await this.getNodeBinding();
+    const headers = await s.signRequest('POST', path, binding);
+    if (signer) this.assertSameSigner(signer);
     const url = `${this.nodeUrl}${path}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -2105,7 +2210,7 @@ export class OgmaraClient {
         const respBody = await boundedJson(resp).catch(() => null);
         if (respBody?.error === 'pow_required' && respBody?.challenge) {
           await this.ensurePowSolved(respBody.challenge as PowChallenge, respBody.address);
-          return this.postJson(path, body);
+          return this.postJson(path, body, signer);
         }
       }
 

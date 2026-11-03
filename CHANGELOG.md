@@ -5,6 +5,360 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0] - 2026-11-02
+
+**Semver note:** this release BREAKS the channel-scope key-envelope API
+(`buildChannelKeyEnvelope` / `ChannelKeyEnvelopeParams`, `getCommitment`
+signature, required `establishEpochKey` deps) in a 0.x MINOR bump. Under
+0.x semver that is allowed, but confirm with the maintainer at release time
+whether to ship it as 0.67.0 or signal it more loudly.
+
+Node-arbitrated channel key epochs (l2-node 0.143.0+, `/health` feature
+`key_commitment_v1`, protocol §8.1 / §8.1.2). Audits of the three client
+rotation protocols reproduced PERMANENT key forks per epoch: with per-device
+first-write-wins storage, members rotating at the same time (everyone rotates
+on a kick) each won some devices, and no client-side ordering could fix that.
+The node now keeps ONE winner per `(channel scope, epoch)` — the lowest rank
+`(key_ts, key_commitment)`, superseding only within a 120 s finality horizon.
+A candidate key is the PAIR `(key_ts, key_commitment)`: `key_ts` is bound into
+the commitment hash, so a known commitment cannot be re-ranked by pairing it
+with an earlier `key_ts`. This release adds the commitment plumbing plus ONE shared establishment
+protocol that web, desktop and mobile will all use instead of their own.
+
+**Migration (clients):** three call sites build channel key envelopes
+without a commitment and no longer type-check / run against 0.143 nodes —
+`web/src/lib/channelCrypto.ts` (~line 260), `desktop/src/lib/channelCrypto.ts`
+(~line 226) and `mobile/src/lib/channelCrypto.ts` (~line 352). Replace their
+epoch logic with `establishEpochKey`, and persist `keyTs` together with every
+channel key: covering a member later needs the SAME `(keyTs, keyCommitment)`
+pair.
+
+**Breaking for channel-scope callers:** `buildChannelKeyEnvelope` with
+`scopeKind: 1` now throws unless `keyCommitment` + `keyTs` are given (STRICT
+policy — a 0.143.0 node refuses a commitment-less channel envelope at any new
+epoch with `400 key_commitment_required`). Use `buildChannelEpochKeyEnvelope`.
+This includes the existing "cover a new member with the current key" paths:
+they must now pass the current epoch's commitment and `key_ts` (both from
+`getKeyCommitment` / the verified wrap). DM key envelopes are unchanged.
+
+### Added
+
+- **`src/channelKeyCommit.ts`** — `computeKeyCommitment(scope, epoch, keyTs,
+  key)` = `keccak256("ogmara-chankey-commit-v1" || channel_scope[32] ||
+  epoch_be8 || key_ts_be8 || key[32])`, `compareRank` (key_ts, then unsigned
+  bytes; lowest wins), `sameCandidate` (pair equality), `isValidKeyCommitment`,
+  hex helpers, validated parsers for the node's `key-commitment` body and 409
+  winner, and the constants (`KEY_COMMIT_FINALITY_MS` 120000,
+  `KEY_TS_MAX_AGE_MS` 900000, `PENDING_KEY_MAX_AGE_MS` 60000,
+  `KEY_ENVELOPE_RATE_LIMIT` 240/60 s per wallet (all 0x61),
+  `KEY_ENVELOPE_SCOPE_RATE_LIMIT` 60/60 s per (wallet, channel scope),
+  `KEY_SCOPE_ROW_CAP` 512,
+  `FEATURE_KEY_COMMITMENT_V1`). Known-answer vectors (channel 2^32+1, epoch 7,
+  key_ts 1790000000000, key 00..1f → `8016166a…a5d4`; scope 32×00, epoch 1,
+  key_ts 1, key 32×00 → `bcd39e59…8d32`) cross-checked against an independent
+  pure-Python Keccak and against l2-node 0.143.0's fixtures (preimage layout
+  included).
+- **`buildChannelEpochKeyEnvelope(signer, {channelId, epoch, key, keyTs, target,
+  deviceId, encPub})`** — wraps the key and computes its commitment
+  internally. `key_commitment` (bin32) and `key_ts` (uint, never float) are
+  appended at the END of the payload map, matching the node's struct order;
+  byte-for-byte parity with the node's golden vectors
+  (`fixtures/epoch-arbitration-vectors.json`, payload, msg_id and signature).
+- **`client.publishChannelKeyEnvelope(bytes)`** → `{status: 'stored' |
+  'already_present' | 'duplicate'}` with typed errors
+  `KeyCommitmentConflictError` (JSON 409 `key_commitment_conflict`, carries the
+  `winner`), `KeyEnvelopeRateLimitedError` (429 `retry_after_ms`, clamped to one
+  window), `KeyEnvelopeRejectedError` (400 `code`: `key_commitment_required`,
+  `key_commitment_invalid`, `key_ts_stale`, `key_epoch_below_floor`,
+  `key_epoch_evicted`, `key_epoch_too_far`, `key_scope_full`) and
+  `KeyEnvelopeTransientError`
+  (network / timeout / 5xx — may have landed; retry the same key). The
+  plain-text 409 "message already exists" is reported as `duplicate`, which is
+  NOT proof the wrap exists (a superseded loser's envelope stays in the node's
+  message store after its wrap is deleted) — `establishEpochKey` treats it as
+  success only when the winner is our pair and (own device) our slot holds a
+  verifying wrap; otherwise it re-signs with a NEW envelope timestamp (new
+  msg_id) and republishes (`publish(..., { fresh: true })`).
+- **`client.getKeyCommitment(channelId, epoch?)`** — the node's arbitration
+  state, validated (safe integers, non-zero 32-byte commitment, matching
+  channel/epoch); member-only, works for private and public encrypted
+  channels. **`getKeyEnvelope(..., { proof: true })`** returns the signed
+  envelope + device claim. **`Health.features`**.
+- **`src/epochKey.ts`**:
+  - `verifyChannelKeyWrap(record, ctx)` — verifies a `?proof=1` record without
+    trusting the node (closes the pre-existing inbound key-injection hole): a
+    valid 0x61 signature, every payload field equal to the record, bound to our
+    channel/wallet/device, signer resolved to a wallet (directly or through a
+    covering device claim) that is a verified member, and after unwrap
+    `H(scope, epoch, key_ts, key) == key_commitment`. Commitment-less records
+    are refused.
+  - `establishEpochKey(deps)` — contract steps 1-7 with every I/O, clock,
+    random source, timer and the token bucket injected (see the module doc);
+    helpers `TokenBucket` (3/s burst 10), `EscalationGate` (once per
+    channel per 10 min), `PendingEpochKeyStore` (bounded; an in-flight lock
+    per `(channel, epoch)`; zeroes abandoned / evicted / cleared keys — for an
+    in-flight entry only once its call releases), `makeOwnWrapFetcher`,
+    `compareTargets`, `validateEstablishOptions`.
+- **`src/epochKey.sim.test.ts`** — deterministic simulator: a fake node that
+  implements the 0.143.0 rule exactly, a multi-node flood-gossip mesh with
+  seeded delays, drops and partitions (a dropped or partition-held message
+  is LOST: as in production, no node-to-node sync protocol carries 0x61 key
+  envelopes; the node's sync path would accept winner wraps only), a virtual
+  clock, and every member device running the real `establishEpochKey`. Faults:
+  lost response after commit, client crash mid-publish (restart with empty
+  memory), 5xx, injected 429s, a malicious member (bogus commitment with a
+  key_ts backdated 1-20 min, slot squat under the winning pair, the winner's
+  public commitment paired with an earlier key_ts), a hostile node (fake 409,
+  withheld wraps, forged / non-member wraps). The fake node models l2-node
+  0.143.0's final rule: pair identity, uniform content-only `key_ts_stale`
+  (also for a late cover reaching a node in state `none`), the winner only
+  ever moving to a strictly better pair, a new epoch accepted only up to
+  `max(highest known, floor) + 256` (`key_epoch_too_far`, checked after
+  `key_commitment_required` / `key_ts_stale` as on the node), WRITE-ONCE
+  slots (also against the winner's own author), sync/backfill winner wraps
+  only (`key_sync_not_winner`; 0x61 never via reconcile), fixed-window
+  rate limits at API/WS ingress — 240/60 s per wallet and 60/60 s per (wallet,
+  channel scope), both checked before either is counted, a refused attempt
+  consuming no slot, a window resetting once `now > start + window` — loser
+  envelopes kept in MESSAGES after a supersede (so a resubmission is a plain
+  duplicate 409), an already-present wrap neither written to MESSAGES nor
+  relayed, and a bounded seen-cache answering replays of non-stored
+  envelopes whose outcome cannot change (already-present, conflict,
+  below-floor, evicted, commitment-invalid) with the ORIGINAL answer
+  (already-present → plain duplicate 409),
+  `recorded_at` never extended, legacy first-write-wins. The sim channel is
+  private-range (floor applies). Not modelled (not client-visible in the sim):
+  the per-scope row cap with plain lowest-epoch-first eviction (no scenario
+  comes near 512 rows), and the node's GOSSIP-side token buckets (per wallet: cap 720,
+  refill 4/s; per wallet + scope: cap 180, refill 1/s) — gossip is NOT exempt
+  on the node, the sim simply does not limit it.
+  Properties: every honest client's key equals every node's winner; every
+  adopted key had a verified own-slot wrap; no confirmed key is superseded;
+  no key lost; a hostile node never gets a non-member key adopted. 5000 seeds
+  by default (`OGMARA_SIM_SEEDS` up to 100000), pinned reproductions of the
+  audit interleavings, and a NEGATIVE CONTROL: the same seeds against a naive
+  per-device FWW node fork (242 of 1000 seeds; property violations in 210),
+  proving the checks catch the bug.
+  Pinned: (a) two rotators partial-wrap different third parties then both lose,
+  (b)/(b2) partial publish failure / crash reuse the SAME key, (c) cross-node
+  first commitments resolved by gossip supersede (+ its forking negative
+  control), (d) desktop/web/mobile arrival-order permutations, (e) a stalled
+  rotator never supersedes late, (f) a superseded loser's duplicate 409 is
+  never success, (g) a backgrounded stale key is regenerated, (h)/(h2) key_ts
+  backdated past/under 15 min, (i) copied commitment with an earlier key_ts
+  never confirms, (j) unverifiable duplicate → fresh re-signed republish,
+  (k) a slot squat under the winning pair is detectable, not preventable: the
+  victim verifies `H(key_ts, K) == C`, fails safe and escalates, (l) the same
+  squat delivered to a lagging node first stays a mere squat (write-once),
+  (m) covering more devices than the per-scope limit waits out the 429s with
+  the same key, (n) a lagging / fresh home node: with the pre-fix deps it
+  creates an epoch the mesh already finalized (a permanent split of that
+  epoch), with `highestEpochSeen` it refuses (`node_lagging`) and the member
+  rotates past it; with the old rule but `peerCommitments` the forked key is
+  caught as `split` and never confirmed. Unit regressions cover the round-2
+  audit probes Z1-Z6 (cleared store mid-call, concurrent calls, zero-key
+  builder, hostile `highestEpochSeen`, non-advancing wake, invalid options)
+  and the surviving mutants N1, N14, N17 and fake-node S4, S6.
+
+### Changed
+
+- **`buildChannelKeyEnvelope`** (scopeKind 1) requires `keyCommitment` +
+  `keyTs` (validated with the node's rules, `keyTs` not in the future); DM
+  envelopes refuse them.
+- **Pair identity everywhere:** "the winner is ours" compares `(key_ts,
+  key_commitment)`, never the commitment alone — a winner that pairs our
+  public commitment with another `key_ts` is never confirmed (the establisher
+  abandons and waits / escalates).
+- **`epochTooHigh`:** `key_epoch_too_far` maps to `failed` with
+  `epochTooHigh: true`. It is surfaced to the caller; nothing retries at
+  another epoch automatically (a "retry at latest + 1" rule was removed in
+  audit r43: on a lagging node it would create an epoch the mesh already
+  has).
+- **Early use, opt-in (`onUnconfirmed`):** `confirmMode: 'final'` stays the
+  default, but a caller may receive the key (a copy) as soon as it is the
+  node's winner and not yet final, and send under it. Residual risk: if a
+  better-ranked key still supersedes it within the ~120 s window, messages
+  sent under it are orphaned for everyone else. The clients decide; the
+  simulator reports the rate (`provisionalOrphaned`): over the default 5000
+  seeds, 604 of 35252 early uses (~1.7%) were later orphaned; 163 of them
+  (~0.5% of all uses) in seeds with neither a malicious member nor a long
+  partition (gossip delays, crashes, 429 backoff and short partitions).
+- **Lagging home nodes (audit r43 B1):** REQUIRED deps `highestEpochSeen`
+  (AUTHENTICATED evidence only: an epoch whose message the caller decrypted,
+  whose wrap verified, or a commitment read from another node) and
+  `epochKnownToExist` (no unsafe default). When the
+  home node reports `none` for an epoch `<= highestEpochSeen` (or one known to
+  exist), no key is created there and the outcome is the new `node_lagging`
+  (`{ epoch, highestEpochSeen, recoveryEpoch }`): the caller rotates to
+  `recoveryEpoch` through the
+  `EscalationGate` or uses another node. Escalation (`escalate`) happens only
+  with evidence — a FINAL winner that never delivered a wrap; a winner wait
+  that ends with the home node still at `none` returns `node_lagging` (with
+  evidence) or `waiting`.
+- **One bounded state machine (audit r43 B2):** the wait-for-winner and
+  settle phases were mutually recursive with no sleep between winner re-reads;
+  a hostile node alternating winners could spin a client. They are now one
+  loop with a mandatory `wake(pollMs)` per iteration and an iteration cap
+  (`maxTotalMs / pollMs`); a winner that moves to a WORSE pair (impossible on
+  an honest node) ends the call as `waiting` (`non_monotonic_winner`).
+- **Returned keys are copies (audit r43 B3):** `established` and `adopted`
+  always return a copy, so clearing or abandoning the pending store (account
+  switch, a later call) can no longer zero a key the caller holds.
+- **`EscalationGate` keyed by channel only (W4)** — a kick that raises the
+  floor no longer opens a second window — and a full table only evicts
+  expired entries (an entry inside its interval is never reset; a full table
+  refuses new channels). Optional `deps.escalationGate` enforces it inside
+  the call (`waiting`, `escalation_gated`). API: `tryEscalate(channelId)`,
+  `remainingMs(channelId)`.
+- **`ChannelKeyEnvelopeParams` is a union discriminated on `scopeKind` (W5):**
+  a channel-scope call without `keyCommitment` / `keyTs` now fails to
+  type-check (new `DmKeyEnvelopeParams`, `ChannelScopeKeyEnvelopeParams`).
+- **Home-node truth (W3):** `established.uncovered` / `rejected` and the
+  pending `covered` set describe the home node only; a peer node that never
+  saw the epoch ignores late covers (`key_ts_stale` there).
+- **Pending-key safety (audit r45 B1):** a call works on a PRIVATE copy of
+  its key; before every publish and before returning it checks that the
+  store still holds its entry (else `waiting` / `pending_lost` — e.g.
+  `pending.clear()` on an account switch mid-call); one call per `(channel,
+  epoch)` at a time (a second one gets `waiting` / `in_flight`); clearing /
+  evicting an in-flight entry defers its zeroing to the call's release;
+  `buildChannelEpochKeyEnvelope` and `newKey` refuse an all-zero key, and the
+  final result is re-checked (`H(scope, epoch, keyTs, key) == keyCommitment`,
+  key not all-zero) before it is returned. Previously a cleared store could
+  make the call publish — and win the epoch with — an ALL-ZERO key.
+- **`highestEpochSeen` (audit r45 B2, revised r48 B1):** it must be
+  AUTHENTICATED evidence (decrypted messages, verified wraps, other nodes'
+  commitments) — that contract, not the SDK, closes the "member writes a big
+  `key_epoch`" inflation. The SDK never discards it (an interim "ignore
+  values above the node's highest + 2" rule made exactly the fresh / lagging
+  node it exists for create a key at a known epoch). `node_lagging` carries
+  `recoveryEpoch = max(epoch, highestEpochSeen) + 1`; when that is beyond
+  what the node accepts (its highest + 256, read with
+  `getCommitment(undefined)` — `getCommitment` now takes an optional epoch)
+  it also carries `unrecoverableHere: true` (rotating there would only hit
+  `epochTooHigh`; a capped epoch would have looped on `node_lagging`, audit
+  r50). If that read fails the call fails CLOSED (`failed`,
+  `commitment_unavailable`, retryable).
+- **Zero keys never wedge adopters (r48 B2):** `verifyChannelKeyWrap`
+  refuses an all-zero key after unwrapping (`zero_key`), and an adopter never
+  takes a wrap that does not hash to the winner — it keeps waiting and
+  escalates once the winner is final (the author role keeps `key_integrity`).
+- **Split detection (audit r45 B3):** optional `deps.peerCommitments` reads
+  the same epoch from other nodes; a different FINAL winner on any of them
+  returns the new outcome `split` (`{ epoch, home, peer }`) before anything is
+  confirmed, a different non-final winner keeps the call waiting, and with
+  peers known enough of them must answer for this epoch. `peerQuorum`
+  (default 1) sets how many peers must report the same different final
+  winner for `split` (with 1, a single hostile peer can force a gated
+  rotation — never a key); any dissent below the quorum is never confirmed
+  over (the call keeps waiting), so a hostile peer can still delay
+  confirmation (~75-90 min per epoch with the defaults) before
+  `unconfirmed_exhausted`. With peers known but none reachable nothing is
+  ever confirmed — return `[]` only when there truly are no peer nodes. A split keeps our
+  own pending key, so repeated calls do not re-cover every member, and a
+  supplied `escalationGate` gates `split` and `node_lagging` too
+  (`waiting` / `escalation_gated`). New outcome `unconfirmed_exhausted` after
+  `maxUnconfirmedCalls` (5) calls in a row end unconfirmed for the same
+  epoch. Documented: query peers with `Promise.allSettled`, throw only when
+  none answered, a 404 from a node where the caller is not a member is "no
+  answer". Without peers the heal trigger stays "a message at my confirmed
+  epoch my key cannot decrypt → rotate (gated)".
+- **Lock takeover (r48 W2):** every injected dep must time out; a per-epoch
+  lock older than its OWNER's `maxTotalMs` + 60 s (stored with the lock) is
+  taken over; the old call's release never frees the new owner's lock, and
+  the old call stops
+  before its next publish. An abort anywhere now also wipes the call's
+  private key copies (W3). Raising only `pollMs` clamps `settlePollMaxMs`
+  instead of throwing. `validateEstablishOptions` is exported.
+- **Options validated (W1)** — `pollMs >= 250`, `minReadSpacingMs >= 250`,
+  sane bounds for the rest — invalid values throw. **Wake hardening (W2):** a
+  custom `waitForEvent` is raced with `sleep`, and winner reads are at least
+  `minReadSpacingMs` (1 s) apart, so neither a never-resolving nor an
+  instantly-resolving wait can hang or spin the call. **Aborts zero key
+  bytes (W3)** in the state machine and in own-slot reads. **A hostile
+  (non-monotonic) winner keeps our pending key (W4)** for a later resume.
+- **Resume (N3):** a winning wrap signed by our wallet key (not just our
+  device key) is resumed rather than adopted.
+- **`deps.now`** must be the local `Date.now` (N2), the clock the envelope
+  builder stamps with.
+- **`client.publishKeyEnvelope`** is documented as DM-only; channel keys go
+  through `publishChannelKeyEnvelope` (N5).
+- **Stale pending keys:** a pending `{key, keyTs}` older than 60 s
+  (finality/2) that the node does not yet show as winner is zeroed and
+  regenerated before its first publish; an own-device `400 key_ts_stale` does
+  the same. A backgrounded or long-rate-limited client never injects an old,
+  well-ranked key late.
+- **`KeyEnvelopeRecord`** gains `key_commitment`, `key_ts`, `msg_id`,
+  `signed_envelope`, `device_claim`; new types `KeyCommitmentInfo`,
+  `KeyCommitmentWinner`, `PublishChannelKeyResult`.
+
+### Notes / deliberate deviations
+
+- **Confirmation waits for FINAL** (default `confirmMode: 'final'`): a key is
+  returned only once the node reports the winner final (≤ ~120 s after a
+  rotation). The contract's "≥ 10 s and still ours" shortcut is available as
+  `confirmMode: 'quick'`. Before the peer check the simulator showed it
+  unsafe (117 of 5000 seeds had a "confirmed" key later superseded); with
+  `peerCommitments` it has no failing seed in 5000 but 2 seeds with a split
+  the peer check could not catch yet (the quick confirm runs before the other
+  node's winner is final) — still not the default.
+- **Own-device pre-publish re-check:** before every own-device attempt after
+  the first (and when the last state read is older than 2 s) the node must
+  still show `none` or our commitment; otherwise the key is abandoned rather
+  than superseding late. Per-node finality horizons differ by the gossip
+  delay, so a late supersede can land inside one node's horizon and outside
+  another's — a permanent cross-node fork (pinned scenario (e)).
+- **Resume after a crash:** a winner signed by THIS device that sits in our
+  own slot is resumed (remaining targets covered with the same key) instead of
+  merely adopted, so a crash after the own-device publish does not strand the
+  other members.
+- **Caller contract** (documented on `establishEpochKey`): persist the epoch
+  being established (never the key) and re-run it after a restart before
+  moving on. The 15000-seed extended run found the case this covers: an author
+  crashing mid-cover, restarting into a transient failure and moving to the
+  next epoch left two members permanently without the previous epoch's key.
+- **Slot-replacement rule found unsafe by the simulator, now reverted on the
+  node:** an interim node rule let the pair's recorded author replace a
+  squatted slot; the simulator showed that a member who first delivers the
+  public pair to a lagging node is recorded as its author there and could
+  overwrite honest wraps. l2-node 0.143.0 final keeps slots write-once, so a
+  squat is detectable (signed) but not preventable; the victim fails safe
+  (wrap does not verify) and the channel recovers by kick + rotate.
+- **OPEN RESIDUAL — a partition during a rotation can split an epoch for
+  good.** No node-to-node sync carries 0x61 key envelopes (an interim "sync
+  admits a better pair inside the horizon" rule does not exist in
+  production and was dropped from the model), so a live-gossip message lost
+  to a partition or a drop is lost: two sides that each recorded a different
+  key stay split, and a node that missed the rotation never learns it.
+  Messages sent under that epoch on one side stay unreadable for the other.
+  Mitigations, both in the SDK: (1) `peerCommitments` → `split` BEFORE a key
+  is confirmed (the members rotate, gated); (2) the decrypt-failure heal
+  trigger (a message at my confirmed epoch my key cannot decrypt → rotate,
+  gated). Simulator (faithful node model, strict): with `peerCommitments`,
+  897 `split` outcomes over the 5000 default seeds and 3779 over the 20000
+  extended seeds, and 0 seeds with a split the peer check did not catch;
+  WITHOUT peers (`OGMARA_SIM_NOPEERS=1`, 5000 seeds) 124 seeds had an
+  uncaught split (710 confirmations contradicted later by another node's
+  winner). A confirmation contradicted by a node that already held a
+  different FINAL winner at confirmation time FAILS the run; later
+  contradictions are counted as residuals: `lateSplits`, `nonHomeSplits`,
+  `homeNone` (a confirmed key that never reached a member because that
+  member's HOME node never got the epoch — 68 in the default seeds, 290 in
+  the extended ones, 605 without peers), `transitLost` (the member's home
+  node has the winner but the wrap's live gossip to it was lost — 325 / 1398)
+  and `stillConverging` (a member one rotation behind when the run ends
+  while a hostile node keeps forcing rotations every 10 min).
+- Residuals: a malicious member can
+  stall an epoch (signed, attributable; heals by escalation); a hostile home
+  node can keep keys from its own users (and make them escalate every 10 min).
+
+### Security
+
+- Recipients now verify WHO wrapped a channel key (`verifyChannelKeyWrap`)
+  instead of trusting the node's record — a hostile node could previously
+  inject a key of its choosing into a member's slot. Runtime code.
+- No dependency changes; `npm audit`: 0 vulnerabilities.
+
 ## [0.66.0] - 2026-10-21
 
 Private-channel "verify before cover" (l2-node 0.142.0+, protocol §3.9.1

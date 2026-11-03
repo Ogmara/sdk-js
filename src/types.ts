@@ -442,6 +442,12 @@ export interface Health {
    * auth binding. Older nodes omit it → `undefined`.
    */
   network?: string;
+  /**
+   * Protocol features this node supports (l2-node 0.143.0+), e.g.
+   * `"key_commitment_v1"` (node-arbitrated channel key epochs). Older nodes
+   * omit it → treat as `[]`.
+   */
+  features?: string[];
 }
 
 /** Anchor verification status for a network node. */
@@ -1353,6 +1359,72 @@ export interface KeyEnvelopeRecord {
   /** Wallet that published the envelope. */
   author: string;
   timestamp: number;
+  /** Channel scope, l2-node 0.143.0+: the key commitment (hex, 32 bytes). Absent on legacy rows. */
+  key_commitment?: string | null;
+  /** Channel scope, l2-node 0.143.0+: the per-key establishment timestamp (ms). */
+  key_ts?: number | null;
+  /** l2-node 0.143.0+: msg_id (hex) of the stored 0x61 envelope. */
+  msg_id?: string | null;
+  /**
+   * `?proof=1` only (l2-node 0.143.0+): the raw signed 0x61 envelope (standard
+   * base64), so the recipient can verify the AUTHOR instead of trusting the
+   * node — see `verifyChannelKeyWrap`.
+   */
+  signed_envelope?: string | null;
+  /** `?proof=1` only: the device claim when the envelope was signed by a device key (else null). */
+  device_claim?: DeviceClaimObject | null;
+}
+
+/** Arbitration state of one `(channel scope, epoch)` on a node (l2-node 0.143.0+). */
+export type KeyCommitmentState = 'none' | 'legacy' | 'arbitrated';
+
+/**
+ * Response of `GET /api/v1/channels/{id}/key-commitment?epoch=N` (l2-node
+ * 0.143.0+, member-only). Validated by `OgmaraClient.getKeyCommitment`.
+ */
+export interface KeyCommitmentInfo {
+  channel_id: number;
+  epoch: number;
+  state: KeyCommitmentState;
+  /** Winning commitment (hex) — present when `state === 'arbitrated'`. */
+  key_commitment?: string;
+  key_ts?: number;
+  /** Resolved wallet of the winner's publisher. */
+  author?: string;
+  /** msg_id (hex) of the winning envelope the node recorded. */
+  msg_id?: string;
+  /** Node-clock ms when the current winner was recorded. */
+  recorded_at?: number;
+  /** True once `recorded_at + finality_ms` has passed: the winner can no longer be superseded on this node. */
+  final: boolean;
+  /** The node's finality horizon (120000). */
+  finality_ms: number;
+}
+
+/** The winner carried by a 409 `key_commitment_conflict` body. */
+export interface KeyCommitmentWinner {
+  key_commitment: string;
+  key_ts: number;
+  author: string;
+  msg_id: string;
+  final: boolean;
+}
+
+/** Result of `OgmaraClient.publishChannelKeyEnvelope`. */
+export interface PublishChannelKeyResult {
+  /**
+   * `stored` — new row; `already_present` — the slot already held a wrap of
+   * the SAME commitment (first-write-wins per device); `duplicate` — the exact
+   * envelope (msg_id) already exists (plain-text 409). `stored` and
+   * `already_present` are success. `duplicate` is NOT proof of a stored wrap:
+   * a superseded loser's envelope stays in the node's message store after its
+   * wrap is deleted — confirm with `getKeyCommitment` (still our commitment)
+   * and, for our own slot, `verifyChannelKeyWrap` (`establishEpochKey` does).
+   * A pre-0.143 node that omits `key_status` reports `stored`.
+   */
+  status: 'stored' | 'already_present' | 'duplicate';
+  /** msg_id (hex) from the node, when it returned one. */
+  msgId?: string;
 }
 
 /** Response from `GET /api/v1/keys/{key_scope}`. */

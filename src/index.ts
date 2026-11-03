@@ -73,6 +73,7 @@ export {
   wrapConvKey,
   unwrapConvKey,
   buildChannelKeyEnvelope,
+  buildChannelEpochKeyEnvelope,
   buildEncryptedDirectMessage,
   buildEncryptedDmEdit,
   buildEncryptedChannelMessage,
@@ -82,6 +83,9 @@ export type {
   DmPlaintext,
   EncryptedDmContent,
   ChannelKeyEnvelopeParams,
+  DmKeyEnvelopeParams,
+  ChannelScopeKeyEnvelopeParams,
+  ChannelEpochKeyEnvelopeParams,
   EncryptedDmParams,
   EncryptedDmEditParams,
   EncryptedChannelMessageParams,
@@ -138,6 +142,59 @@ export type {
   FilterVerifiedMembersResult,
 } from './privateChannelProof';
 export type { PrivateChannelIdDerivation } from './channelId';
+// Node-arbitrated key epochs (sdk-js 0.67.0, l2-node 0.143.0+ `key_commitment_v1`):
+// key commitments + rank, typed publish errors, and the ONE shared epoch
+// establishment protocol every client uses.
+export {
+  KEY_COMMITMENT_DOMAIN,
+  KEY_COMMITMENT_LEN,
+  KEY_COMMIT_FINALITY_MS,
+  KEY_TS_MAX_AGE_MS,
+  PENDING_KEY_MAX_AGE_MS,
+  KEY_ENVELOPE_RATE_LIMIT,
+  KEY_ENVELOPE_SCOPE_RATE_LIMIT,
+  KEY_SCOPE_ROW_CAP,
+  FEATURE_KEY_COMMITMENT_V1,
+  DEFAULT_KEY_ENVELOPE_RETRY_MS,
+  MAX_KEY_ENVELOPE_RETRY_MS,
+  computeKeyCommitment,
+  compareRank,
+  sameCandidate,
+  isValidKeyCommitment,
+  keyCommitmentsEqual,
+  keyCommitmentFromHex,
+  keyCommitmentToHex,
+  parseKeyCommitmentInfo,
+  parseKeyCommitmentWinner,
+  classifyKeyEnvelopeResponse,
+  KeyCommitmentConflictError,
+  KeyEnvelopeRateLimitedError,
+  KeyEnvelopeRejectedError,
+  KeyEnvelopeTransientError,
+} from './channelKeyCommit';
+export type { KeyRank } from './channelKeyCommit';
+export {
+  verifyChannelKeyWrap,
+  establishEpochKey,
+  makeOwnWrapFetcher,
+  compareTargets,
+  TokenBucket,
+  EscalationGate,
+  PendingEpochKeyStore,
+  DEFAULT_ESTABLISH_OPTIONS,
+  validateEstablishOptions,
+} from './epochKey';
+export type {
+  VerifiedChannelKeyWrap,
+  VerifyChannelKeyWrapContext,
+  ChannelKeyWrapVerification,
+  EpochKeyTarget,
+  PendingEpochKey,
+  EstablishEpochKeyOptions,
+  EstablishEpochKeyDeps,
+  EstablishEpochKeyOutcome,
+  UnconfirmedEpochKey,
+} from './epochKey';
 
 // Bot command parsing (protocol §3.3, §3.11). `parseCommand` is the bot
 // author's half of the contract — see its doc comment for why a bot must fall

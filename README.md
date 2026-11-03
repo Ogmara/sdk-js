@@ -95,6 +95,61 @@ npm run build:widget
 | `ws` | WebSocket subscription client with auto-reconnect |
 | `widget` | Embeddable feed widget (IIFE build for CDN) |
 | `types` | Full TypeScript type definitions |
+| `channelKeyCommit` | Channel key commitments + arbitration rank, typed key-envelope errors (l2-node 0.143.0+) |
+| `epochKey` | `establishEpochKey` — the shared channel key-epoch protocol — and `verifyChannelKeyWrap` |
+
+### Channel key epochs (l2-node 0.143.0+)
+
+Encrypted channels rotate their key per epoch, and the node keeps exactly one
+winning key per epoch: the lowest `(key_ts, key_commitment)` pair, final 120 s
+after the node recorded it. Use `establishEpochKey(deps)` instead of writing
+your own rotation logic — it reuses one key across retries, publishes to your
+own device first, adopts another member's winning key only from a wrap it has
+verified (`verifyChannelKeyWrap`), and escalates to the next epoch when the
+winner never reaches you. Refuse to use it on nodes whose `/health` `features`
+lack `key_commitment_v1`.
+
+You must pass `highestEpochSeen` and `epochKnownToExist`, both from
+AUTHENTICATED evidence only: an epoch whose channel message you decrypted,
+whose wrap verified, or a commitment read from another node — never a bare
+`key_epoch` number from a message (any member can write any number there; the
+SDK cannot tell, so this contract is the protection). When your node has no
+state for an epoch the channel already uses, the result is `node_lagging` and
+no key is created there — rotate to its `recoveryEpoch` (gated by
+`EscalationGate`, once per channel per 10 min); with `unrecoverableHere: true`
+that epoch is beyond what this node accepts (its highest + 256), so switch
+nodes or surface it instead. If the node's highest epoch
+cannot be read the call fails closed (`failed`, retryable).
+`key_epoch_too_far` comes back as `failed` with `epochTooHigh`: surface it,
+never retry at another epoch. `established.uncovered` / `rejected` describe
+your home node only.
+
+A network partition during a rotation can split an epoch across nodes, and no
+node-to-node sync repairs it (this is an open residual). Two mitigations:
+pass `peerCommitments` — query other nodes' `getKeyCommitment` with
+`Promise.allSettled`, return the answers you got, throw only if none answered
+(a 404 from a node where you are not a member is "no answer") — and you get
+`split` before anything is confirmed (`peerQuorum`, default 1, sets how many
+peers must agree; with 1 a single hostile peer can force a gated rotation;
+with more, a dissent below the quorum is never confirmed over, so a hostile
+peer can still DELAY confirmation, about 75-90 min per epoch, before
+`unconfirmed_exhausted`). With peers known but none reachable, nothing is
+ever confirmed — return `[]` only when you truly have no peer nodes;
+and treat a channel message at your confirmed epoch that your key cannot
+decrypt as the signal to rotate (gated — anyone can send garbage ciphertext,
+the gate is the rate limit). After `maxUnconfirmedCalls` (5) calls in a row
+end unconfirmed for an epoch you get `unconfirmed_exhausted`. Always pass a
+`guard` that throws on account switch, and make every injected dep time out;
+one call per channel and epoch runs at a time (`waiting` / `in_flight`; a lock
+older than `maxTotalMs` + 60 s is taken over), and a call whose pending key is
+cleared mid-way stops (`waiting` / `pending_lost`).
+
+By default a key is returned only once the node reports its winner **final**
+(≤ ~2 min after a rotation). Clients that cannot wait may pass
+`onUnconfirmed` to receive the key as soon as it is the node's (not yet final)
+winner and send under it — at the risk that a better-ranked key still
+supersedes it, orphaning those messages for every other member. The SDK's
+simulator measures that risk (`npm test` prints `provisionalOrphaned`).
 
 ## Crypto Dependencies
 

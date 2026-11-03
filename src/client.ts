@@ -153,7 +153,15 @@ import type {
   ChannelJoinOptions,
   FederateChannelOptions,
   MemberProofsResponse,
+  KeyCommitmentInfo,
+  PublishChannelKeyResult,
 } from './types';
+import {
+  classifyKeyEnvelopeResponse,
+  parseKeyCommitmentInfo,
+  KeyEnvelopeRejectedError,
+  KeyEnvelopeTransientError,
+} from './channelKeyCommit';
 import {
   MemberProofsError,
   MAX_MEMBER_PROOF_ADDRESSES,
@@ -1871,11 +1879,107 @@ export class OgmaraClient {
 
   /**
    * Publish a signed `ChannelKeyEnvelope` (0x61) — a per-device wrapped epoch key
-   * for a DM or channel (build it with `buildChannelKeyEnvelope`). Routed through
-   * the generic message-ingestion path.
+   * for a DM (build it with `buildChannelKeyEnvelope`). Routed through the
+   * generic message-ingestion path.
+   *
+   * @deprecated for CHANNEL scope: use {@link publishChannelKeyEnvelope}, which
+   * maps the l2-node 0.143.0 arbitration answers (409 conflict, 429
+   * `retry_after_ms`, 400 codes, the duplicate 409) to typed results. This
+   * method stays for DM scope.
    */
   async publishKeyEnvelope(envelopeBytes: Uint8Array): Promise<unknown> {
     return this.postEnvelope('/api/v1/messages', envelopeBytes);
+  }
+
+  /**
+   * Publish a signed CHANNEL-scope `ChannelKeyEnvelope` (0x61) built with
+   * `buildChannelEpochKeyEnvelope` (l2-node 0.143.0+ arbitration), with a typed
+   * outcome instead of an opaque body:
+   *  - resolves `{status: 'stored' | 'already_present'}` (node `key_status`), or
+   *    `{status: 'duplicate'}` for the plain-text 409 "message already exists"
+   *    — the exact envelope is in the node's message store. NOT proof the wrap
+   *    exists: a superseded loser's envelope stays there after its wrap is
+   *    deleted, so confirm the commitment is still ours (`getKeyCommitment`)
+   *    before treating it as success (`establishEpochKey` does);
+   *  - throws `KeyCommitmentConflictError` (JSON 409 `key_commitment_conflict`:
+   *    another key won this epoch — abandon ours and adopt the winner),
+   *    `KeyEnvelopeRateLimitedError` (429; wait `retryAfterMs`, retry the SAME
+   *    key), `KeyEnvelopeRejectedError` (400 etc.; permanent for this
+   *    envelope) or `KeyEnvelopeTransientError` (network, timeout, 5xx — the
+   *    envelope MAY have landed; retry the SAME key).
+   * A PoW challenge is solved and the request retried once, as everywhere else.
+   */
+  async publishChannelKeyEnvelope(envelopeBytes: Uint8Array, powRetried = false): Promise<PublishChannelKeyResult> {
+    if (!this.signer) throw new Error('Signer required');
+    if (!this.powVerified && this.powInflight) { try { await this.powInflight; } catch { /* surface own error */ } }
+    const path = '/api/v1/messages';
+    const headers = await this.authHeaders('POST', path);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      let resp: Response;
+      try {
+        resp = await fetch(`${this.nodeUrl}${path}`, {
+          method: 'POST',
+          headers: { ...headers, 'content-type': 'application/octet-stream' },
+          body: envelopeBytes.buffer.slice(envelopeBytes.byteOffset, envelopeBytes.byteOffset + envelopeBytes.byteLength) as ArrayBuffer,
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      } catch (e) {
+        throw new KeyEnvelopeTransientError(0, `key envelope request failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      let text = '';
+      try {
+        text = await boundedText(resp, 64 * 1024);
+      } catch (e) {
+        if (resp.ok) throw new KeyEnvelopeTransientError(resp.status, 'key envelope: unreadable success body');
+        text = '';
+      }
+      if (resp.ok) {
+        let body: any = null;
+        try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+        const ks = body?.key_status;
+        const status: PublishChannelKeyResult['status'] = ks === 'already_present' ? 'already_present' : 'stored';
+        const msgId = typeof body?.msg_id === 'string' ? body.msg_id : undefined;
+        return msgId ? { status, msgId } : { status };
+      }
+      if (resp.status === 429 && !this.powVerified && !powRetried) {
+        let body: any = null;
+        try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+        if (body?.error === 'pow_required' && body?.challenge) {
+          await this.ensurePowSolved(body.challenge as PowChallenge, body.address);
+          return this.publishChannelKeyEnvelope(envelopeBytes, true);
+        }
+      }
+      const out = classifyKeyEnvelopeResponse(resp.status, text);
+      if (out === 'duplicate') return { status: 'duplicate' };
+      throw out;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * `GET /api/v1/channels/{id}/key-commitment?epoch=N` (l2-node 0.143.0+,
+   * authenticated, member-only — private AND public encrypted channels): this
+   * node's arbitration state for the channel's epoch (`epoch` omitted =
+   * highest known). The body is validated
+   * (safe integers, 32-byte non-zero commitment); a malformed body throws.
+   * Non-2xx throws (404 = not a member, unknown channel, or a pre-0.143 node).
+   */
+  async getKeyCommitment(channelId: number, epoch?: number): Promise<KeyCommitmentInfo> {
+    if (!Number.isSafeInteger(channelId) || channelId <= 0) throw new Error('channelId must be a positive safe integer');
+    if (epoch !== undefined && (!Number.isSafeInteger(epoch) || epoch < 0)) {
+      throw new Error('epoch must be a non-negative safe integer');
+    }
+    const q = epoch !== undefined ? `?epoch=${epoch}` : '';
+    const body = await this.getAuthenticated<unknown>(`/api/v1/channels/${channelId}/key-commitment${q}`);
+    const info = parseKeyCommitmentInfo(body);
+    if (!info || info.channel_id !== channelId || (epoch !== undefined && info.epoch !== epoch)) {
+      throw new KeyEnvelopeRejectedError(0, 'malformed key-commitment response');
+    }
+    return info;
   }
 
   /**
@@ -1884,16 +1988,23 @@ export class OgmaraClient {
    * is given. `deviceId` is the caller's device id (hex). The node only ever serves
    * envelopes wrapped for the authenticated wallet, and the blob is ECIES-sealed to
    * a device enc key the caller must hold to unwrap.
+   *
+   * `{ proof: true }` (l2-node 0.143.0+) also returns the raw signed envelope
+   * and, for a device signer, its device claim, so the AUTHOR can be verified
+   * with `verifyChannelKeyWrap` instead of trusting the node. For a channel
+   * scope pass `author = ''` (channel keys are stored author-agnostically).
    */
   async getKeyEnvelope(
     keyScopeHex: string,
     deviceId: string,
     author?: string,
     epoch?: number,
+    options: { proof?: boolean } = {},
   ): Promise<KeyEnvelopeResponse> {
     const params = new URLSearchParams({ device_id: deviceId });
     if (author !== undefined) params.set('author', author);
     if (epoch !== undefined) params.set('epoch', String(epoch));
+    if (options.proof) params.set('proof', '1');
     return this.getAuthenticated<KeyEnvelopeResponse>(
       `/api/v1/keys/${encodeURIComponent(keyScopeHex)}?${params.toString()}`,
     );

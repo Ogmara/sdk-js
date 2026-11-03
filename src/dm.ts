@@ -9,6 +9,7 @@
 import { encode, decode } from '@msgpack/msgpack';
 import { aeadEncrypt, aeadDecrypt, wrapKey, unwrapKey, KEY_LEN, type WrappedKey } from './crypto';
 import { buildEnvelope, computeConversationId, computeChannelScope, validateButtons } from './envelope';
+import { computeKeyCommitment, isValidKeyCommitment } from './channelKeyCommit';
 import { MessageType, type ButtonRow } from './types';
 import { mediaToWire, mediaFromWire, mediaToWireAttachment, type MediaDescriptor } from './media';
 import type { WalletSigner } from './auth';
@@ -121,25 +122,58 @@ export function unwrapConvKey(
   return unwrapKey(wrapped, deviceEncPriv, conversationId);
 }
 
-/** Parameters for a per-device {@link buildChannelKeyEnvelope}. */
-export interface ChannelKeyEnvelopeParams {
-  /** 32-byte key scope — `conversation_id` for DMs. */
+/** Fields shared by both scopes of {@link ChannelKeyEnvelopeParams}. */
+interface KeyEnvelopeParamsBase {
+  /** 32-byte key scope — `conversation_id` for DMs, `computeChannelScope(id)` for channels. */
   keyScope: Uint8Array;
-  /** 0 = DM, 1 = channel (see {@link KeyScopeKind}). */
-  scopeKind: number;
   /** Epoch this key belongs to. */
   epoch: number;
   /** Recipient wallet (`klv1…`) this key is wrapped for. */
   target: string;
   /** Recipient device id — hex of the device Ed25519 signing pubkey. */
   deviceId: string;
-  /** DM only: the other participant (for the node's participant-binding check). */
-  peer?: string;
-  /** Channel only: the channel id. */
-  channelId?: number;
   /** The ECIES-wrapped key from {@link wrapConvKey}. */
   wrapped: WrappedKey;
 }
+
+/** DM scope (`scopeKind: KeyScopeKind.DM`): no commitment. */
+export interface DmKeyEnvelopeParams extends KeyEnvelopeParamsBase {
+  scopeKind: typeof KeyScopeKind.DM;
+  /** The other participant (for the node's participant-binding check). */
+  peer?: string;
+  channelId?: undefined;
+  keyCommitment?: undefined;
+  keyTs?: undefined;
+}
+
+/**
+ * Channel scope (`scopeKind: KeyScopeKind.Channel`): `keyCommitment` and
+ * `keyTs` are REQUIRED (l2-node 0.143.0+ refuses a channel key envelope
+ * without them at any non-legacy epoch). Prefer
+ * {@link buildChannelEpochKeyEnvelope}, which computes the commitment.
+ */
+export interface ChannelScopeKeyEnvelopeParams extends KeyEnvelopeParamsBase {
+  scopeKind: typeof KeyScopeKind.Channel;
+  /** The channel id. */
+  channelId: number;
+  peer?: undefined;
+  /** `computeKeyCommitment(scope, epoch, keyTs, key)` — 32 bytes, non-zero. */
+  keyCommitment: Uint8Array;
+  /**
+   * The per-key constant establishment timestamp (ms) — the first half of the
+   * arbitration rank. Every wrap of the same key MUST carry the same value
+   * (persist it together with the key), and it must not be later than the
+   * envelope's own timestamp.
+   */
+  keyTs: number;
+}
+
+/**
+ * Parameters for a per-device {@link buildChannelKeyEnvelope} — a union
+ * discriminated on `scopeKind`, so a channel-scope call without
+ * `keyCommitment` / `keyTs` fails to type-check.
+ */
+export type ChannelKeyEnvelopeParams = DmKeyEnvelopeParams | ChannelScopeKeyEnvelopeParams;
 
 /**
  * Build a signed `ChannelKeyEnvelope` (0x61) delivering one wrapped key to one
@@ -149,7 +183,7 @@ export async function buildChannelKeyEnvelope(
   signer: WalletSigner,
   p: ChannelKeyEnvelopeParams,
 ): Promise<Uint8Array> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     key_scope: p.keyScope,
     scope_kind: p.scopeKind,
     epoch: p.epoch,
@@ -161,7 +195,76 @@ export async function buildChannelKeyEnvelope(
     nonce: p.wrapped.nonce,
     wrapped: p.wrapped.wrapped,
   };
+  if (p.scopeKind === KeyScopeKind.Channel) {
+    // STRICT policy (l2-node 0.143.0): a commitment-less channel envelope is
+    // only accepted at a legacy epoch; never build one. Validated here with
+    // the node's own rules so a bad value fails before signing.
+    if (!isValidKeyCommitment(p.keyCommitment)) {
+      throw new Error('channel key envelope requires a 32-byte non-zero keyCommitment');
+    }
+    if (p.keyTs === undefined || !Number.isSafeInteger(p.keyTs) || p.keyTs <= 0) {
+      throw new Error('channel key envelope requires keyTs (positive safe integer ms)');
+    }
+    // The node requires key_ts <= envelope.timestamp; buildEnvelope stamps
+    // Date.now() after this check, so a future keyTs would be refused.
+    if (p.keyTs > Date.now()) throw new Error('keyTs must not be in the future');
+    // Appended at the END (msgpack map keys; the node's struct appends them
+    // last so array-form pre-0.143 envelopes still decode). `key_ts` is an
+    // integer — msgpack encodes a safe integer as uint, never a float.
+    payload.key_commitment = p.keyCommitment;
+    payload.key_ts = p.keyTs;
+  } else if (p.keyCommitment !== undefined || p.keyTs !== undefined) {
+    throw new Error('keyCommitment/keyTs are channel-scope only');
+  }
   return buildEnvelope(signer, MessageType.ChannelKeyEnvelope, payload);
+}
+
+/** Parameters for {@link buildChannelEpochKeyEnvelope}. */
+export interface ChannelEpochKeyEnvelopeParams {
+  /** The channel id (scope = `computeChannelScope(channelId)`). */
+  channelId: number;
+  /** Key epoch (>= 1). */
+  epoch: number;
+  /** The 32-byte channel epoch key. Not retained or modified. */
+  key: Uint8Array;
+  /** The key's establishment timestamp (ms) — identical for every wrap of this key. */
+  keyTs: number;
+  /** Recipient wallet (`klv1…`). */
+  target: string;
+  /** Recipient device id (hex of the device Ed25519 signing pubkey). */
+  deviceId: string;
+  /** Recipient device's X25519 enc pubkey (32 bytes). */
+  encPub: Uint8Array;
+}
+
+/**
+ * Build a signed channel-scope `ChannelKeyEnvelope` (0x61) for one device,
+ * wrapping `key` to `encPub` (salt = channel scope) and computing the key
+ * commitment internally, so the commitment can never disagree with the key.
+ * Publish with `OgmaraClient.publishChannelKeyEnvelope`.
+ */
+export async function buildChannelEpochKeyEnvelope(
+  signer: WalletSigner,
+  p: ChannelEpochKeyEnvelopeParams,
+): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(p.epoch) || p.epoch < 1) throw new Error('channel key epoch must be >= 1');
+  if (!(p.key instanceof Uint8Array) || p.key.length !== KEY_LEN) throw new Error('channel key must be 32 bytes');
+  // Defence in depth (audit r45 B1): an all-zero key is never a real key —
+  // it is what a wiped buffer looks like. Never publish it.
+  if (p.key.every((b) => b === 0)) throw new Error('refusing to wrap an all-zero channel key');
+  if (!(p.encPub instanceof Uint8Array) || p.encPub.length !== 32) throw new Error('encPub must be 32 bytes');
+  const scope = computeChannelScope(p.channelId);
+  return buildChannelKeyEnvelope(signer, {
+    keyScope: scope,
+    scopeKind: KeyScopeKind.Channel,
+    epoch: p.epoch,
+    target: p.target,
+    deviceId: p.deviceId,
+    channelId: p.channelId,
+    wrapped: wrapConvKey(p.key, p.encPub, scope),
+    keyCommitment: computeKeyCommitment(scope, p.epoch, p.keyTs, p.key),
+    keyTs: p.keyTs,
+  });
 }
 
 /** Parameters for {@link buildEncryptedDirectMessage}. */

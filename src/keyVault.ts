@@ -82,7 +82,7 @@ export function sealKeyVault(bk: Uint8Array, keyring: VaultKeyring): KeyVaultSyn
     throw new Error('no CSPRNG available for vault nonce');
   }
   const nonce = crypto.getRandomValues(new Uint8Array(AEAD_NONCE_LEN));
-  const plaintext = new Uint8Array(encode({ conv: keyring.conv, chan: keyring.chan }));
+  const plaintext = new Uint8Array(encode({ conv: protoSafe(keyring.conv), chan: protoSafe(keyring.chan) }));
   const encrypted_vault = aeadEncrypt(bk, nonce, plaintext, vaultAad(VAULT_FORMAT_VERSION));
   return { encrypted_vault, nonce, format_version: VAULT_FORMAT_VERSION };
 }
@@ -109,7 +109,17 @@ export function openKeyVault(
     : Uint8Array.from(data.nonce as number[]);
   if (nonce.length !== AEAD_NONCE_LEN) throw new Error('key-vault nonce wrong length');
   const plaintext = aeadDecrypt(bk, nonce, ct, vaultAad(fmt));
-  const obj = decode(plaintext) as { conv?: unknown; chan?: unknown };
+  let obj: { conv?: unknown; chan?: unknown };
+  try {
+    obj = decode(plaintext) as { conv?: unknown; chan?: unknown };
+  } catch (e) {
+    // A vault sealed before 0.68.0 with an own `__proto__` entry name: the
+    // decoder refuses that key, which would lock the whole vault. Rename it
+    // in the plaintext (same length, bytes kept) and decode again.
+    const fixed = renameProtoKeysInVaultPlaintext(plaintext);
+    if (!fixed) throw e;
+    obj = decode(fixed) as { conv?: unknown; chan?: unknown };
+  }
   return {
     conv: coerceKeyMap(obj.conv),
     chan: coerceKeyMap(obj.chan),
@@ -117,13 +127,115 @@ export function openKeyVault(
 }
 
 /** Coerce a decoded msgpack map into `Record<string, Uint8Array>`, dropping any
- *  entry whose value is not a 32-byte key (defensive against a corrupt/forged blob). */
+ *  entry whose value is not a 32-byte key (defensive against a corrupt/forged blob).
+ *  An own `__proto__` name is renamed (see {@link renameProtoKey}), never dropped. */
 function coerceKeyMap(v: unknown): Record<string, Uint8Array> {
-  const out: Record<string, Uint8Array> = {};
-  if (v && typeof v === 'object') {
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      if (val instanceof Uint8Array && val.length === KEY_LEN) out[k] = val;
-    }
+  return protoSafe(v);
+}
+
+/**
+ * The name an own `__proto__` entry is stored under: `%proto_NN` (NN = 00..99,
+ * the first one `taken` does not report). The msgpack decoder rejects a map
+ * key `__proto__` — a vault containing one could never be opened again — and
+ * a plain object cannot hold it as an own key safely. The `%` keeps it an
+ * uninterpretable name for every client, so its bytes are carried verbatim.
+ * Exactly 9 characters, like `__proto__`, so sealed plaintext can be fixed up
+ * in place.
+ */
+export function renameProtoKey(taken: (name: string) => boolean): string {
+  for (let i = 0; i < 100; i++) {
+    const n = `%proto_${String(i).padStart(2, '0')}`;
+    if (!taken(n)) return n;
   }
+  for (let i = 100; i < 1_000_000; i++) if (!taken(`%proto_${i}`)) return `%proto_${i}`;
+  throw new Error('no free name for a __proto__ vault entry');
+}
+
+/** Copy a key map into a plain object, keeping 32-byte values; an own `__proto__` key is renamed. */
+function protoSafe(v: unknown): Record<string, Uint8Array> {
+  const out: Record<string, Uint8Array> = {};
+  if (!v || typeof v !== 'object') return out;
+  const src = v as Record<string, unknown>;
+  let proto: Uint8Array | null = null;
+  for (const [k, val] of Object.entries(src)) {
+    if (!(val instanceof Uint8Array) || val.length !== KEY_LEN) continue;
+    if (k === '__proto__') proto = val;
+    else out[k] = val;
+  }
+  if (proto) out[renameProtoKey((n) => Object.prototype.hasOwnProperty.call(out, n))] = proto;
   return out;
+}
+
+/**
+ * Byte-level fix-up of a vault plaintext whose `conv` / `chan` map holds a
+ * `__proto__` key: walks the msgpack structure the SDK writes (maps of str →
+ * bin) and rewrites each such key IN PLACE to a free 9-character
+ * `%proto_NN` name, so every value byte is preserved. Returns null when there
+ * is nothing to fix or the plaintext is not in that shape.
+ */
+export function renameProtoKeysInVaultPlaintext(pt: Uint8Array): Uint8Array | null {
+  const buf = pt.slice();
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let o = 0;
+  const need = (n: number) => { if (o + n > buf.length) throw new Error('short'); };
+  const mapLen = (): number => {
+    need(1);
+    const b = buf[o++]!;
+    if ((b & 0xf0) === 0x80) return b & 0x0f;
+    if (b === 0xde) { need(2); const n = dv.getUint16(o); o += 2; return n; }
+    if (b === 0xdf) { need(4); const n = dv.getUint32(o); o += 4; return n; }
+    throw new Error('not a map');
+  };
+  const str = (): [number, number] => {
+    need(1);
+    const b = buf[o++]!;
+    let n: number;
+    if ((b & 0xe0) === 0xa0) n = b & 0x1f;
+    else if (b === 0xd9) { need(1); n = buf[o++]!; }
+    else if (b === 0xda) { need(2); n = dv.getUint16(o); o += 2; }
+    else if (b === 0xdb) { need(4); n = dv.getUint32(o); o += 4; }
+    else throw new Error('not a str');
+    need(n);
+    const start = o;
+    o += n;
+    return [start, n];
+  };
+  const skipValue = (): void => {
+    need(1);
+    const b = buf[o++]!;
+    let n: number;
+    if (b === 0xc4) { need(1); n = buf[o++]!; }
+    else if (b === 0xc5) { need(2); n = dv.getUint16(o); o += 2; }
+    else if (b === 0xc6) { need(4); n = dv.getUint32(o); o += 4; }
+    else if (b === 0xc0) n = 0;
+    else throw new Error('unexpected value type');
+    need(n);
+    o += n;
+  };
+  const PROTO = new TextEncoder().encode('__proto__');
+  const dec = new TextDecoder();
+  let changed = false;
+  try {
+    const top = mapLen();
+    for (let i = 0; i < top; i++) {
+      str();
+      const n = mapLen();
+      const keys: Array<[number, number]> = [];
+      for (let j = 0; j < n; j++) {
+        keys.push(str());
+        skipValue();
+      }
+      const names = new Set(keys.map(([s, l]) => dec.decode(buf.subarray(s, s + l))));
+      for (const [s, l] of keys) {
+        if (l !== PROTO.length || !PROTO.every((x, k) => buf[s + k] === x)) continue;
+        const nn = renameProtoKey((x) => x.length !== 9 || names.has(x));
+        names.add(nn);
+        buf.set(new TextEncoder().encode(nn), s);
+        changed = true;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return changed ? buf : null;
 }

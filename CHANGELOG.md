@@ -5,6 +5,363 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0] - 2026-11-04
+
+One shared channel KEYRING for web, desktop and mobile. Each client had its
+own key cache and vault mapping (web `ChannelKeyCache`, desktop
+`ChannelKeyStore`, mobile `ChannelKeyring`), and every audit round found a new
+way one of them could lose a key or let a hostile node's key win. This release
+replaces all three with one implementation, pinned by a regression test per
+finding and by a seeded differential property test. Additive only; the
+key-vault format is unchanged.
+
+### Added
+
+- **`src/channelKeyring.ts`** — `ChannelKeyring`, keyed `${scopeHex}:${epoch}`.
+  Three checks are kept apart (never confuse them):
+  - *pair-consistent* (`verified`): the pair `(keyTs, commitment)` re-hashes to
+    the key (the keyring re-hashes it). A hostile node can compute such a
+    pair for ANY key of its own, with any `keyTs` — so this alone is nothing;
+  - *author-verified* (`source: 'establish' | 'wrap'`): our own key, or a wrap
+    whose author and membership the client verified (`verifyChannelKeyWrap`).
+    `fetch`, `legacy` and `vault` keys are not;
+  - *final* (`final`): the node reported the pair as the epoch's final winner.
+  - **Trusted** = author-verified AND pair-consistent AND not provisional;
+    only trusted keys are sent under or count as evidence.
+- `put(scope, epoch, key, {source, pair?, verified?, final?, provisional?,
+  generation?})` → `'stored' | 'promoted' | 'conflict' | 'refused' | 'stale' |
+  'invalid'`. Keys and pairs are COPIED (caller buffers are never kept or
+  zeroed).
+- Primary order: trusted+final > trusted > provisional > own / vault >
+  node-served. A strictly better key promotes itself (the old primary stays
+  as an alternate); among equal ranks the FIRST SEEN key stays. So a second
+  trusted key replaces the first only when the node reports it FINAL and the
+  first is not.
+- `markVerified(scope, epoch, key, pair, {final?, generation?})` re-hashes the
+  pair; for a `fetch` / `legacy` / `vault` key it returns
+  `'needs_author_proof'` and changes nothing. The flow for those is: run
+  `verifyChannelKeyWrap`, then `put` the same bytes with `source: 'wrap'`.
+  A recorded pair is only replaced by a FINAL one.
+- A provisional key is finalised ONLY by an author source (`establish` /
+  `wrap`) with `provisional: false` or `verified` + `final`; a `fetch` or
+  `vault` copy of the same bytes never finalises it, even claiming `final`.
+  A vault copy makes it exportable.
+- **Caller responsibilities:** pass `source: 'wrap'` only after
+  `verifyChannelKeyWrap` verified the wrap's author and membership, and
+  `final` only for the pair the node reports as the epoch's final winner.
+  Residual by design: a malicious MEMBER can author a verified wrap and a
+  hostile node can call it final — that key then outranks our own non-final
+  key (ours stays held and decrypts); between two final keys the first seen
+  stays, since no tie-break can be trusted when `final` can be claimed for
+  both.
+- Caps, none of which ever drops a protected key (own, author-verified,
+  provisional, restored from or written to the vault):
+  - 4 alternates per epoch (`MAX_ALTS_PER_EPOCH`): beyond it the NEWEST
+    unprotected (node-served, never backed up) key is shed, so a flood cannot
+    push out the first node key seen; node-served keys we back up stay
+    ≤ 1 + 4 per epoch over any number of sessions. A commitment-less
+    node-served key at an occupied epoch is refused.
+  - ABOVE the scope's highest trusted epoch: 512 UNTRUSTED epochs
+    (`MAX_UNTRUSTED_EPOCHS_PER_SCOPE`, the node's own per-scope row cap) —
+    epochs holding only node-served or vault keys, restored ones included
+    (never evicted), so a hostile node cannot grow that part across sessions.
+  - AT OR BELOW it: restored history does not count (so after a restart one
+    re-verified own-slot wrap of the latest epoch frees it), but node-served
+    epochs NEW in this session are limited to 64 per scope per session
+    (`MAX_SESSION_HISTORY_EPOCHS_PER_SCOPE`): a reader's legacy history still
+    accumulates, at most that much per session, never in one burst.
+  - Beyond either cap the oldest all-unprotected counted epoch is evicted,
+    else the new epoch is `'refused'`. Until the first re-verification after
+    a restart nothing is trusted, so everything is "above" and a reader with
+    more than 512 restored epochs gets `'refused'` for new node-served epochs
+    until then.
+  - 4096 epochs per scope (`MAX_EPOCHS_PER_SCOPE`), absolute: a new
+    node-served epoch is refused beyond it (a memory bound; own and restored
+    keys are never refused or evicted for it).
+  - **Node-served keys are never protected by being backed up.** A key a
+    node served that no author source vouched for (`entriesAt(...).
+    nodeServed`) is backed up under its own name class `S:E#ns<n>` and comes
+    back node-served after a restore: it stays sheddable at every cap and in
+    every export. Re-`put` it with `source: 'wrap'` after
+    `verifyChannelKeyWrap` to protect it. Older clients keep `#ns` names
+    verbatim (unknown name); losing those copies is acceptable — the node can
+    serve them again.
+  - **Vault byte budget** (`maxVaultBytes`, default
+    `VAULT_CHAN_SOFT_LIMIT_BYTES` = 1.5 MiB of the node's 2 MiB sealed-vault
+    limit, l2-node `MAX_KEY_VAULT_SIZE`; `estimateVaultChanBytes` gives the
+    estimate). Protected keys and unknown entries always go in; if they alone
+    exceed the budget the export throws `ChannelKeyringError(
+    'vault_too_large')` — never a silent shrink; clients MUST surface it (and
+    can offer `pruneUnverified`). Node-served keys go in only while the WHOLE
+    record stays within a quarter of the budget (`NODE_SERVED_VAULT_SHARE`),
+    so junk can never take more than 1/4 and the user's keys always keep at
+    least 3/4, across any number of sessions. Kept first: backed-up node
+    history (highest epoch first — the oldest is shed), then this session's
+    node keys (earliest first — the newest is shed). `#pri` copies only while
+    the whole record stays within half the budget.
+  - **Malicious member** (another member's verified wraps — refuse-only, the
+    caps NEVER evict anything): a new epoch above the highest FINAL epoch is
+    refused once 512 epochs there (`MAX_MEMBER_EPOCHS_PER_SCOPE`) may be
+    another member's (no own / final / provisional key in them, not only node
+    keys) — after a restart restored keys of unknown provenance count as
+    "maybe member" for this count, so the bound holds across sessions, but
+    they are never evicted for it; at or below the final epoch at most 64 new
+    member epochs per session; at most 4 maybe-member keys per epoch. Ours are
+    never member-capped: `establish` keys, provisional keys, and wraps put
+    with the new `ownSlot: true` (the wrap's verified author is our own
+    wallet). Residual: a hostile MEMBER can make further member wraps in that
+    channel be refused (`'refused'`), never delete a key of ours.
+- Views: `keysAt`, `entriesAt` (copies with `verified`, `authorVerified`,
+  `trusted`, `final`, `provisional`, `exportable`, `persisted`, `nodeServed`,
+  `own`, `restored`, `primary`),
+  `holds`, `epochs`, `latest`, `latestBounded(scope, maxEpoch)`,
+  `latestVerified(scope, {maxEpoch?, finalOnly?})`,
+  `bestForSend(scope, {maxEpoch?, finalOnly?, allowUnverified?})`, `clear()`.
+- `exportForVault(generation?)`: the UNION of every held exportable key and
+  every uninterpretable vault entry, collision-free by construction, in
+  CANONICAL order per slot — `S:E`, `S:E#pri` (a COPY of the primary value),
+  `S:E#alt<n>` ascending, `S:E#ovf<n>` ascending — with uninterpretable
+  entries LAST. `#pri` copies are a transitional safety for older clients:
+  written only for each scope's 16 highest epochs (`PRI_COPIES_PER_SCOPE`,
+  at most 512 in total — old mobile keeps only 1024 unknown entries) and
+  only while the whole record stays within half the byte budget. New alternates are numbered from `#alt5`
+  (`FIRST_WRITTEN_ALT_INDEX`) up to `MAX_ALT_INDEX` = 64, then `#ovf`.
+  Why: older clients keep 4 alternates and rewrite `S:E` and `#alt1..#alt4`
+  on their own export. One with room reads our aliases and renumbers them
+  (values kept). One whose OWN slot for that epoch is full keeps ours
+  verbatim under their names — `#alt5+` and `#pri` are names it never
+  rewrites, and the one name it does overwrite, `S:E`, is backed by the
+  `#pri` copy where one is written (residual: at an epoch without a `#pri`
+  copy, an old client whose own slot there is full overwrites that value in
+  ITS backup; ours keeps it). Tested against copies of the current desktop, mobile and web
+  code, with and without a full slot. The primary name is only given to an
+  own / author-verified key or a vault key read under that name (never a
+  node-served one, never one served in this session, never one whose
+  assigned name is an alias). Names stay stable once assigned, except that
+  `#alt1..#alt4` and `~<n>` read from older vaults are re-homed to `#alt5+`
+  on the first export. Throws `ChannelKeyringError('stale')` for an outdated
+  generation.
+- `importFromVault(chan, generation?)`: accepts `S:E`, `S:E#pri`,
+  `S:E#alt<n>` (n ≤ 999), `S:E#ovf<n>` and the older mobile `S:E~<n>`; any
+  other name is kept VERBATIM (up to 8192, `MAX_OPAQUE_VAULT_ENTRIES`; a
+  second value under the same unknown name is kept as `<name>#dup<n>`; an
+  own `__proto__` name becomes `%proto_NN`, and importing the same bytes
+  again reuses that entry). `import(export(x))` re-exports `x` exactly.
+- **Two-step export** — `prepareExport(generation?)` returns `{chan,
+  commitToken}` with NO side effect; `commitExport(commitToken,
+  generation?)` marks the exported keys persisted (and pins their names) —
+  call it only after the sealed vault was published. A failed publish leaves
+  every key as it was. `exportForVault` stays prepare + commit at once
+  (harmless now that persisting protects no node-served key; the two-step
+  form is recommended). Tokens are single-use and refused after `clear()`.
+- **`pruneUnverified({keepLatestPerScope?, dryRun?, classes?, scopes?,
+  includeRestoredPrimaries?, generation?})`** → `{removedCount, removedBytes,
+  byClass: {nodeServed, restoredAlternates, memberWraps, restoredPrimaries,
+  ownAlternatesAtRisk}}`: the escape hatch for `vault_too_large`. Outside
+  each scope's latest N (default 16) epochs, only in `scopes` if given (e.g.
+  the one channel a hostile member flooded), it removes the selected
+  `classes`. DEFAULT `['nodeServed']` — the zero-risk path (keys a node
+  served that no author vouched for). On request: `restoredAlternates`
+  (restored from `#alt` / `~` names; MAY be the user's own key that another
+  key outranked — reported as `ownAlternatesAtRisk`, warn before
+  confirming), `memberWraps` (other members' non-final wraps of this
+  session), `restoredPrimaries` (restored primary-name keys and client-put
+  `vault` keys once backed up — most likely the user's own history; last
+  resort, also via `includeRestoredPrimaries`). Never own keys
+  (`establish`, `ownSlot` wraps), final wraps, provisional keys, a
+  client-put `vault` key never backed up, or unknown entries. Removed keys
+  are remembered for the session and skipped by `importFromVault`, so
+  "prune → re-import the remote vault → seal" yields a smaller vault (the
+  next successful backup removes them remotely); `clear()` forgets. Clients
+  MUST show a `dryRun` and get explicit confirmation.
+- **`bestForSendLegacy(scope, {isLegacyEpoch, maxEpoch?})`** — for
+  pre-arbitration (commitment-less) channels only. Returns a key only when
+  the scope holds NOTHING but commitment-less keys a node served this
+  session (no own / author-sourced, provisional or restored key, no key with
+  a commitment anywhere in the scope): the highest in-range epoch
+  `isLegacyEpoch` accepts. `isLegacyEpoch` must not come from the serving
+  node alone — derive it from data the node cannot forge (the channel's
+  arbitration activation recorded locally, pinned creator data predating key
+  commitments) and never assume it after a restart.
+- **Put option `ownSlot`** (with `source: 'wrap'`): the wrap's verified
+  author is our own wallet — the key is ours and never member-capped.
+  REQUIRED for every wrap from our own slot that we authored (see Migration).
+- **Put option `maxEpoch`**: ceiling for keys that are not ours (clients pass
+  node highest + 256); node-served keys and other members' wraps (final or
+  not) above it are `'refused'`; own keys never.
+- **`importFromVault(chan, generation?, {maxEpoch?})`** (third parameter,
+  type `ChannelKeyImportOptions`): restored keys of unknown provenance ABOVE
+  the ceiling cannot be ours and are classed `memberWraps` for
+  `pruneUnverified` (still imported, never dropped).
+- A FINAL member wrap (node-arbitrated, pair-verified) is exempt from the
+  member caps — bounded only by `MAX_EPOCHS_PER_SCOPE` — so a member flood
+  can never stop the channel's real key from arriving.
+- **`opaqueCount`**, **`heldEpochCount`** getters (cheap emptiness check).
+- **`acceptFetchedEnvelope(requestedEpoch, envelopeEpoch)`** — a node-served
+  key envelope is only accepted for the epoch the client asked for. Clients
+  MUST check it before `put(..., {source: 'fetch' | 'legacy'})`.
+- **`renameProtoKey`, `renameProtoKeysInVaultPlaintext`** (key vault, see
+  Fixed).
+- Tests: `src/channelKeyring.test.ts` (one case per finding: desktop B-1,
+  B-2, W-a, W-b, W-c, M20; web B1; mobile alternates / unknown entries /
+  epoch 100000; amendment M-B1, M-B2, N-a, N-f; first-draft audit A, B, N1,
+  N2, G/G2 old-client interop, `__proto__`, W1-W5; the cross-client fixture
+  vault; a real seal / open; round 3: full-slot old clients, laundering via
+  backup, provisional finalisation, `MAX_SAFE_INTEGER` epochs) and
+  `src/channelKeyring.property.test.ts` — a DIFFERENTIAL test against a
+  model written from this spec (not from the code) with adversarial ops
+  (node-computed pairs for attacker keys, fabricated better-ranked pairs,
+  `final` claims, hostile epochs up to `MAX_SAFE_INTEGER`, planted
+  alternates), malicious-member ops (author-verified wraps the node calls
+  final), alias indices up to 999, `#ovf`, `#pri`, old-client re-export round
+  trips including PRE-FILLED (full) old-client slots, invariants I1-I12;
+  `KEYRING_PROP_SEQUENCES` (default 3000; full run 20000). Old-client copies
+  for interop live in `test/interop/` (test fixtures, not shipped).
+
+### Fixed
+
+- **Key vault `__proto__` (could lock a whole vault):** the msgpack decoder
+  rejects a map key `__proto__`, so a vault holding such an entry name could
+  never be opened. `sealKeyVault` now copies `conv` / `chan` prototype-safely
+  and RENAMES an own `__proto__` entry to `%proto_NN` (bytes kept; an
+  uninterpretable name for every client); `openKeyVault` renames it the same
+  way, and a vault sealed earlier with a raw `__proto__` key is repaired in
+  place before decoding (`renameProtoKeysInVaultPlaintext`, same-length
+  rename, every value byte preserved).
+
+### Decisions
+
+- **More than 8192 uninterpretable vault entries:** `exportForVault()` throws
+  `ChannelKeyringError('opaque_overflow')` until `clear()`, rather than
+  shrinking the remote vault. Clients must surface it.
+- `bestForSend(…, {allowUnverified: true})` is ONLY for scopes the caller
+  KNOWS are pre-arbitration (no commitment anywhere) — NEVER because nothing
+  is trusted yet after a restart. Its fallback is the highest primary that
+  is author-sourced, or else was read under the primary vault name and was
+  not served by a node in this session — never one restored from an alias
+  name (a backed-up node key is always written under an alias). Residual: an OLD
+  MOBILE client re-exporting a slot that holds only alias keys writes the
+  first one under the primary name, after which it is indistinguishable from
+  our own; and an old client that overwrote `S:E` leaves its value as the
+  primary on our next restore (ours, from `#pri`, stays held as an
+  alternate). Both matter only in `allowUnverified` scopes.
+- `latestVerified` / `bestForSend` take `maxEpoch`: a malicious MEMBER can
+  author a verified wrap at any epoch, so clients pass `maxEpoch: node
+  highest + 256` to BOTH (the rotation floor and the send key).
+- After a restart every key is a `vault` key (the vault records no
+  provenance): nothing is trusted, `latestVerified` is null and the rotation
+  floor 0, until the client re-verifies its own slot's wrap and re-puts the
+  key as `wrap` — do that before sending or relying on the floor. A
+  node-served key that was backed up
+  comes back as `vault` too and is indistinguishable from our own — it can
+  decrypt and appear in the `allowUnverified` fallback, never in strict
+  `bestForSend` / `latestVerified`.
+
+### Migration (clients)
+
+Replace the client keyring with `ChannelKeyring`; the vault record goes
+through `importFromVault` / `exportForVault`. Map provenance carefully —
+`verified` here means pair-consistent only. Rules for every client:
+
+- The keyring returns COPIES. Code that compares keys by reference
+  (`e.key === key`) must compare bytes.
+- After a restart nothing is trusted (`latestVerified` null, rotation floor
+  0, strict `bestForSend` null) until the own-slot wrap of the latest epoch
+  is re-verified and re-`put` as `wrap`. Do that before sending, covering or
+  relying on the floor. NEVER use `allowUnverified` to bridge this gap — it
+  is only for scopes known to be pre-arbitration (no commitments anywhere).
+- Before every backup re-open and import the REMOTE vault, then seal
+  `exportForVault()`: the vault is one last-write-wins record, so sealing
+  without the remote first would overwrite keys another device added.
+- `ChannelKeyringError('opaque_overflow')` and `('vault_too_large')` from
+  the export must be shown to the user (the backup is refused rather than
+  shrunk); for `vault_too_large` offer `pruneUnverified` (dry run first,
+  explicit confirmation).
+- Use `prepareExport` → seal → publish → `commitExport`.
+- "This pair lost" / downgrades stay client state: the keyring never lowers
+  a key.
+- Legacy (commitment-less) channels: `bestForSendLegacy` with the node's
+  legacy epochs, instead of client-side workarounds.
+
+- **desktop `ChannelKeyStore`**:
+  - `put(s, e, key, gen, source, meta)` → `put(s, e, key, {source, pair:
+    {keyTs: meta.keyTs, commitment: meta.keyCommitment}, verified, final,
+    provisional, generation: gen})`: `'verified'` → `source: 'establish'`
+    (own / adopted via establish) or `'wrap'` (verified wrap) with
+    `verified: true`; `'vault'` → `importFromVault`; `'legacy'` →
+    `'legacy'`; `'provisional'` → `'establish', provisional: true`.
+  - "A final non-provisional key replaces a provisional primary" is now the
+    rank rule: a trusted key outranks the provisional one; an untrusted key
+    (vault, node) never does. Finalising the SAME bytes needs an author
+    source with `verified` + `final` or `provisional: false`.
+  - `markVerified`'s old guards (legacy / provisional / primary-only) are
+    replaced by provenance: it works on any author-verified key (alternates
+    included) and refuses `fetch` / `legacy` / `vault`
+    (`'needs_author_proof'`).
+  - Key comparisons by reference (`channelCrypto.ts` ~725 `e.key === key`,
+    `channelKeyStore.ts` ~169 in `markVerified`) must become byte
+    comparisons.
+  - The old `highestEvidence` counted vault keys; `latestVerified` does not
+    — see the restart rule above.
+  - `latestTrusted` → `bestForSend(s)`; the old `bestForSend` fallback
+    (highest key of any kind) → `bestForSend(s, {allowUnverified: true})`
+    ONLY for a scope known to be pre-arbitration; `highestEvidence` →
+    `latestVerified(s)?.epoch ?? 0`; `healEligible(e)` →
+    `latestVerified(s)?.epoch === e`; `trustProbeEpoch` → compare `latest(s)`
+    with `bestForSend(s)`.
+- **web `ChannelKeyCache`**: split the slot key into `(scopeHex, epoch)`;
+  `source` maps 1:1; `legacy: true` → `source: 'legacy'`; `early: true` →
+  `provisional: true`. `isVerifiedPair(entry)` (which already excluded fetch /
+  vault / legacy) → an author-verified `put` with `verified: true` — i.e. the
+  keyring's `trusted`; `confirmed` / `checked: 'sendable'` → `final: true`;
+  `rotationBase(cache, s, confirmedOnly)` → `latestVerified(s, {finalOnly:
+  confirmedOnly})?.epoch ?? 0`. In-place entry edits in `checkEntryCore`
+  become `markVerified` (author keys) or a same-bytes `put` with `source:
+  'wrap'` after the own-wrap check. Web sends only final keys: pass
+  `{finalOnly: true}` to `bestForSend`.
+- **mobile `ChannelKeyring`**: `put(k, key, meta)` → `state: 'confirmed'` +
+  `verified` → author source + `verified: true, final: true`; `'provisional'`
+  / `early` → `provisional: true`; `'legacy'` → `source: 'legacy'`;
+  `'unknown'` (vault) → `importFromVault`. Results: `'added' | 'same'` →
+  `'stored' | 'promoted'`; `'mismatch'` → `'conflict' | 'promoted'`; `'full'`
+  → `'refused'`, which now happens ONLY for unprotected (node-served) keys.
+  `setMeta` → `markVerified`; a DOWNGRADE (setMeta to a worse state) is not
+  supported — the keyring never lowers a key; keep "this pair lost" in the
+  client's check state. `candidates` → `entriesAt`; `epochsFor` → `epochs`;
+  `countsAsEvidence` → `entriesAt(...).trusted`; `pickSendEpoch` →
+  `bestForSend(s, {maxEpoch: nodeHighest + 256})`.
+- **What "never loses a key" means:** the keyring never drops a key of
+  ours or a restored one by itself. Keys that DO leave a backup: node-served
+  (`#ns`) keys beyond a quarter of the byte budget (the node can serve them
+  again), and whatever the user confirmed in `pruneUnverified`. Member wraps
+  beyond the member caps are refused, not stored.
+- **`ownSlot: true` is REQUIRED for every wrap taken from your OWN enc-key
+  slot whose verified author is your own wallet** (keys you established,
+  re-verified after a restart). Without it the key counts as another
+  member's: once the member cap of that channel is full such a put is
+  `'refused'` (that epoch cannot be decrypted until re-put with `ownSlot`),
+  and a `classes: ['memberWraps']` prune would remove it. After a restart,
+  re-verify the latest OWN epoch (with `ownSlot`) BEFORE processing other
+  members' wraps.
+- **Pass `maxEpoch` (node highest + 256) to every `put` of a key that is not
+  yours** and to `importFromVault(chan, gen, {maxEpoch})`: keys of others
+  above it are refused at put time; restored keys of unknown provenance above
+  it are classed `memberWraps`, so a restored member flood can be pruned
+  without touching history below it. A FINAL (node-arbitrated) member wrap
+  is exempt from the member caps (only the absolute 4096-epoch cap bounds
+  it), so a flood can never stop the channel's real key from arriving.
+- `memberWraps` reaches member keys still sourced `wrap` in this session and
+  restored keys above the import ceiling; other restored keys are
+  `restoredPrimaries` / `restoredAlternates`.
+- **Older clients reading a 0.68.0 backup** (until they adopt the keyring):
+  every value of a 0.68.0 export survives their re-export — with room in
+  their slot they renumber our aliases; with their own slot full they keep
+  ours verbatim under `#alt5+` / `#pri`, names they never overwrite (tested
+  against copies of the current desktop, mobile and web code). Limits that
+  remain: old mobile keeps at most 1024 unknown entries (the SDK 8192), and
+  old mobile writes the first alias of an alias-only slot under the primary
+  name (see the `allowUnverified` residual above).
+
 ## [0.67.0] - 2026-11-02
 
 **Semver note:** this release BREAKS the channel-scope key-envelope API

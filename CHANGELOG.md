@@ -5,6 +5,36 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.69.0] - 2026-11-14
+
+### Added
+
+- **State inclusion proofs (l2-node 0.147.0+).** `OgmaraClient.getStateProof`
+  fetches `GET /api/v1/state/proof` for a user, channel, delegation or
+  channel-membership record. `verifyStateProofOnChain(proof, query, network)`
+  checks it against the canonical root on-chain; `verifyStateProof(proof,
+  { stateRoot, query, minBlockHeight? })` does the same against a root you
+  already have. The node is not trusted: the verifier requires the proof to
+  be about exactly the queried record (key rebuilt from the query, and the
+  identity fields inside the value for users, channels and delegations,
+  whose leaves hash only the value), binds a requested height, recomputes
+  the leaf, rebuilds the subtree root from the index-driven sibling path and
+  frames the four subtree `(count, root)` pairs into the state root. The
+  verdict returns the proven record parsed. Known-answer vectors from the
+  node pin both implementations together. Lower-level helpers:
+  `stateRecordKey`, `hashStateLeaf`, `stateRecordLeaf`, `stateRootFromPath`,
+  `frameStateRoot`, `STATE_SUBTREES`.
+- `getFinalCanonicalAnchor(network, height)`: the canonical state root for a
+  height, or `null`. For an escalated height it returns only the
+  materialized resolution (`getEscalatedCanonical`), never the provisional
+  tiebreak preview, and it re-checks escalation after reading the root.
+  An error from the escalation view propagates (fails closed) rather than
+  reading as "not escalated". Queries with a channel id outside the safe
+  integer range are rejected.
+  Documented limit: with the deployed SC a past canonical height can still
+  be contested by newly registered anchorers, so the answer is "canonical
+  now", not permanent.
+
 ## [0.68.0] - 2026-11-04
 
 One shared channel KEYRING for web, desktop and mobile. Each client had its

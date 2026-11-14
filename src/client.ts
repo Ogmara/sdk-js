@@ -19,6 +19,8 @@
 
 import type { WalletSigner, AuthHeaders, NodeBinding } from './auth';
 import type { PowChallenge } from './pow';
+import type { StateProof, StateProofQuery } from './stateProof';
+import { stateRecordKey } from './stateProof';
 import { solveChallengeAsync } from './pow';
 import { addressToPubkey } from './encryption';
 import { normalizeHashtag } from './utils';
@@ -339,6 +341,25 @@ export class OgmaraClient {
    */
   async registrationInfo(): Promise<RegistrationInfo> {
     return this.get('/api/v1/registration/info');
+  }
+
+  /**
+   * GET /api/v1/state/proof (l2-node 0.147.0+) — inclusion proof that a
+   * user, channel, delegation or channel-membership record is part of the
+   * state root the node anchored on-chain. Not trusted until verified with
+   * `verifyStateProofOnChain` (or `verifyStateProof` against a root you got
+   * from the chain). Nodes without anchoring answer 404 `no_checkpoint`;
+   * a record changed since the checkpoint is 409 `record_changed`; private
+   * channels are refused (403). Public.
+   */
+  async getStateProof(query: StateProofQuery): Promise<StateProof> {
+    stateRecordKey(query); // validates the query (safe-integer channel id)
+    const params = new URLSearchParams({ subtree: query.subtree });
+    if ('address' in query) params.set('address', query.address);
+    if ('channelId' in query) params.set('channel_id', String(query.channelId));
+    if ('deviceKey' in query) params.set('device_key', query.deviceKey);
+    if (query.height !== undefined) params.set('height', String(query.height));
+    return this.get(`/api/v1/state/proof?${params.toString()}`);
   }
 
   /** GET /api/v1/network/stats */

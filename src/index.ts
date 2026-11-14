@@ -322,5 +322,25 @@ export {
   getTotalUnclaimedNodeEarnings,
   getChannelInfo,
   getEscalatedCanonical,
+  getFinalCanonicalAnchor,
 } from './sc_queries';
 export type { ScQueryOptions, ScChannelInfo } from './sc_queries';
+// Anchored state inclusion proofs (sdk-js 0.69.0, l2-node 0.147.0+).
+export {
+  STATE_SUBTREES,
+  verifyStateProof,
+  verifyStateProofOnChain,
+  stateRecordLeaf,
+  stateRootFromPath,
+  frameStateRoot,
+  hashStateLeaf,
+  stateRecordKey,
+} from './stateProof';
+export type {
+  StateSubtree,
+  StateProof,
+  StateProofSubtree,
+  StateProofQuery,
+  StateProofVerdict,
+  StateProofExpectation,
+} from './stateProof';

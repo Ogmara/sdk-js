@@ -226,8 +226,8 @@ export async function getChannelInfo(
  * escalated-quorum agreement or a completed `resolveTiebreak` call.
  * Mirrors the SC's `getEscalatedCanonical` view (0.7.0).
  *
- * Distinct from a `getCanonicalAnchor` call (not exposed here — this SDK
- * is not a node and has no reason to read general anchor state): for an
+ * Distinct from a raw `getCanonicalAnchor` call (use
+ * {@link getFinalCanonicalAnchor}, which applies this distinction): for an
  * escalated height, `getCanonicalAnchor` starts returning the §2.9
  * tiebreak's PROVISIONAL preview the instant escalation triggers — well
  * before the 24h grace window closes — and that preview can still be
@@ -257,4 +257,66 @@ export async function getEscalatedCanonical(
     throw new Error(`getEscalatedCanonical returned a malformed root: expected 64 hex chars, got ${JSON.stringify(root.slice(0, 16))}${root.length > 16 ? '…' : ''} (length ${root.length})`);
   }
   return root;
+}
+
+async function isDivergenceEscalated(
+  rpc: string,
+  sc: string,
+  blockHeight: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  // The view never `require!`s; a require failure means a misconfigured
+  // RPC or contract, so it propagates (fail closed) instead of reading
+  // as "not escalated".
+  const items = await vmQuery(rpc, sc, 'isDivergenceEscalated', [u64MinimalHex(blockHeight)], timeoutMs);
+  const b = items[0];
+  return b !== undefined && b.length > 0 && b[b.length - 1] === 1;
+}
+
+/**
+ * The FINAL canonical state root anchored at `blockHeight` (64 hex chars),
+ * or `null` if there is none yet — the trust anchor for
+ * `verifyStateProof` (l2-node 0.147.0+ state proofs).
+ *
+ * Applies the same finality rule as the node's divergence watcher: a
+ * non-escalated height's `getCanonicalAnchor` is permanent once reached,
+ * but for an escalated height it may be the §2.9 tiebreak's provisional
+ * preview, so only {@link getEscalatedCanonical}'s materialized resolution
+ * counts. Escalation is re-checked after reading the root so one that
+ * lands between the two reads cannot slip a preview through.
+ *
+ * Limit: "not escalated" is the current answer, not a permanent one. In the
+ * deployed SC a first-time anchorer's floor is the pre-v0.3 global height,
+ * so newly registered anchorers can still contest an already-canonical past
+ * height and, with escalated quorum, replace its root. Treat a result as
+ * "canonical now"; for high-stakes checks prefer heights that have been
+ * canonical for a while and re-check before acting.
+ */
+export async function getFinalCanonicalAnchor(
+  network: ScNetwork,
+  blockHeight: number,
+  opts: ScQueryOptions = {},
+): Promise<string | null> {
+  const { rpc, sc } = net(network);
+  assertU64Arg(blockHeight, 'blockHeight');
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  if (await isDivergenceEscalated(rpc, sc, blockHeight, timeoutMs)) {
+    return getEscalatedCanonical(network, blockHeight, opts);
+  }
+  let items: Uint8Array[];
+  try {
+    items = await vmQuery(rpc, sc, 'getCanonicalAnchor', [u64MinimalHex(blockHeight)], timeoutMs);
+  } catch (e) {
+    if (e instanceof ScRequireError) return null;
+    throw e;
+  }
+  if (items.length === 0 || items[0].length === 0) return null;
+  const root = bytesToUtf8(items[0]);
+  if (!/^[0-9a-f]{64}$/i.test(root)) {
+    throw new Error(`getCanonicalAnchor returned a malformed root (length ${root.length})`);
+  }
+  if (await isDivergenceEscalated(rpc, sc, blockHeight, timeoutMs)) {
+    return getEscalatedCanonical(network, blockHeight, opts);
+  }
+  return root.toLowerCase();
 }

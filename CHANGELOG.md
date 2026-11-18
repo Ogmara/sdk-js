@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   help. It reaches the tree only through dev dependencies (`tsup`,
   `vitest`/`vite` via `tinyglobby`/`fdir`) and is not in the published
   package. Clears when picomatch ships a patched release (> 4.0.7).
+- **Release and CI audit gate: hard fail on published dependencies only**
+  (`npm audit --omit=dev`, which reports 0 vulnerabilities); the full audit
+  still runs and is reported but no longer blocks, so a dev-tooling advisory
+  without any fix cannot hold back a release.
 
 ## [0.69.0] - 2026-11-14
 

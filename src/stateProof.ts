@@ -1,40 +1,41 @@
 /**
  * Verification of state inclusion proofs from `GET /api/v1/state/proof`
- * (l2-node 0.147.0+, spec 03 §3.6, spec 02 §7).
+ * (l2-node 0.148.0+, anchored state root v4; spec 03 §3.6, spec 02 §7).
  *
- * A proof shows that a user, channel, delegation or channel-membership
- * record is part of the state root anchored on-chain at `block_height`. The
- * node is not trusted: {@link verifyStateProof} checks that the proof is
- * about the record you ASKED for (key rebuilt from your query, and for the
- * value-only subtrees the identity fields inside the value), recomputes the
- * leaf from the value, rebuilds the subtree root from the sibling path,
- * frames it with the other three subtree `(count, root)` pairs into the
- * state root and compares that with the root you supply — normally the
- * canonical root from {@link getFinalCanonicalAnchor} (or use
- * {@link verifyStateProofOnChain}, which does both).
+ * A proof shows that an on-chain user registration, channel or device
+ * delegation is part of the state root anchored on-chain at
+ * `block_height`. The node is not trusted: {@link verifyStateProof} checks
+ * that the proof is about the record you ASKED for (key rebuilt from your
+ * query, identity fields inside the value), recomputes the leaf from the
+ * value, rebuilds the subtree root from the sibling path, frames it with
+ * the other subtree `(count, root)` pairs into the state root and compares
+ * that with the root you supply — normally the canonical root from
+ * {@link getFinalCanonicalAnchor} (or use {@link verifyStateProofOnChain},
+ * which does both).
  *
  * What a valid proof means: the record had this value in the state anchored
  * at `block_height`. It says nothing about later changes — bind a recent
  * height with `minBlockHeight`, and for delegations also check the proven
- * record's `active` / `expires_at`. A users record also exists for wallets
- * that only published a profile; on-chain registration means
- * `registered_at > 0`.
+ * record's `revoked_at` / `expires_at`. Only chain records are anchored
+ * (v4): a users record exists exactly for on-chain registered wallets.
+ * Profiles, channel metadata, memberships and messages are not anchored —
+ * they are authenticated by their authors' signatures.
  *
- * Mirrors `l2-node/src/crypto/merkle.rs` (`hash_leaf`, `hash_kv`,
- * `hash_pair`, `root_from_path`, `frame_state_root`). Messages are not part
- * of the anchored state, so they cannot be proven this way.
+ * Mirrors `l2-node/src/crypto/merkle.rs` (`hash_leaf`, `hash_pair`,
+ * `root_from_path`, `frame_state_root`) and the key layout of
+ * `l2-node/src/storage/anchored_state.rs`.
  */
 
 import { sha256 } from '@noble/hashes/sha2';
 import { getFinalCanonicalAnchor, type ScQueryOptions } from './sc_queries';
 import type { ScNetwork } from './sc_discovery';
 
-/** The four anchored subtrees, in state-root framing order. */
-export const STATE_SUBTREES = ['users', 'channels', 'delegations', 'channel_members'] as const;
+/** The anchored subtrees, in state-root framing order. */
+export const STATE_SUBTREES = ['users', 'channels', 'delegations'] as const;
 export type StateSubtree = (typeof STATE_SUBTREES)[number];
 
-/** `ogmara-state-root-v3` — the node's `STATE_ROOT_DOMAIN`. */
-const STATE_ROOT_DOMAIN = new TextEncoder().encode('ogmara-state-root-v3');
+/** `ogmara-state-root-v4` — the node's `STATE_ROOT_DOMAIN`. */
+const STATE_ROOT_DOMAIN = new TextEncoder().encode('ogmara-state-root-v4');
 
 /** One subtree's `(count, root)` as served in a proof. */
 export interface StateProofSubtree {
@@ -53,9 +54,10 @@ export interface StateProof {
    *  Not trusted — verification always checks the chain. */
   canonical_confirmed?: boolean;
   subtree: StateSubtree;
-  /** Hex RocksDB key of the record. */
+  /** Hex key of the record in the node's anchored chain mirror. */
   key: string;
-  /** Base64 record value (the bytes the leaf hashes). */
+  /** Base64 canonical record value (the bytes the leaf hashes), as sealed
+   *  at `block_height`. */
   value: string;
   leaf: string;
   leaf_index: number;
@@ -68,8 +70,7 @@ export interface StateProof {
 export type StateProofQuery =
   | { subtree: 'users'; address: string; height?: number }
   | { subtree: 'channels'; channelId: number; height?: number }
-  | { subtree: 'delegations'; address: string; deviceKey: string; height?: number }
-  | { subtree: 'channel_members'; channelId: number; address: string; height?: number };
+  | { subtree: 'delegations'; address: string; deviceKey: string; height?: number };
 
 /** What a proof must match, for {@link verifyStateProof}. */
 export interface StateProofExpectation {
@@ -92,7 +93,9 @@ export type StateProofVerdict =
       key: Uint8Array;
       /** The proven record bytes. */
       value: Uint8Array;
-      /** The proven record, parsed (every current subtree stores JSON). */
+      /** The proven record, parsed: users `{address, public_key}`, channels
+       *  `{channel_id, creator, slug}`, delegations `{created_at, device_key,
+       *  expires_at, permissions, revoked_at, user}`. */
       record: unknown;
     }
   | { ok: false; reason: string };
@@ -127,12 +130,6 @@ function concat(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-function u32be(n: number): Uint8Array {
-  const b = new Uint8Array(4);
-  new DataView(b.buffer).setUint32(0, n);
-  return b;
-}
-
 function u64be(n: number): Uint8Array {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigUint64(0, BigInt(n));
@@ -141,27 +138,26 @@ function u64be(n: number): Uint8Array {
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
 
-/** The node's RocksDB key for the queried record (`l2-node storage::schema`). */
+/** The node's anchored-mirror key for the queried record
+ *  (`l2-node storage::anchored_state`): `u` + address, `c` + u64 BE channel
+ *  id, `d` + address + 0x00 + device key. */
 export function stateRecordKey(query: StateProofQuery): Uint8Array {
   if ('channelId' in query && (!Number.isSafeInteger(query.channelId) || query.channelId < 0)) {
     throw new Error('channelId must be a non-negative safe integer');
   }
   switch (query.subtree) {
     case 'users':
-      return utf8(query.address);
+      return concat(utf8('u'), utf8(query.address));
     case 'channels':
-      return u64be(query.channelId);
+      return concat(utf8('c'), u64be(query.channelId));
     case 'delegations':
-      return concat(utf8(query.address), new Uint8Array([0xff]), utf8(query.deviceKey));
-    case 'channel_members':
-      return concat(u64be(query.channelId), utf8(query.address));
+      return concat(utf8('d'), utf8(query.address), new Uint8Array([0x00]), utf8(query.deviceKey));
   }
 }
 
-/** For the value-only subtrees the leaf does not hash the key, so the
- *  record must name itself: its identity fields must match the query. */
+/** The leaf hashes the value only, so the record must name itself: its
+ *  identity fields must match the query. */
 function valueMatchesQuery(query: StateProofQuery, record: unknown): boolean {
-  if (query.subtree === 'channel_members') return true; // key is in the leaf
   if (!record || typeof record !== 'object') return false;
   const r = record as Record<string, unknown>;
   switch (query.subtree) {
@@ -170,7 +166,7 @@ function valueMatchesQuery(query: StateProofQuery, record: unknown): boolean {
     case 'channels':
       return r.channel_id === query.channelId;
     case 'delegations':
-      return r.user_address === query.address && r.device_pub_key === query.deviceKey;
+      return r.user === query.address && r.device_key === query.deviceKey;
   }
 }
 
@@ -183,12 +179,9 @@ export function hashStateLeaf(data: Uint8Array): Uint8Array {
   return sha256(concat(new Uint8Array([0x00]), data));
 }
 
-/** Leaf of a record in `subtree`: value only, except channel members which
- *  bind key and value (node `hash_kv`). */
-export function stateRecordLeaf(subtree: StateSubtree, key: Uint8Array, value: Uint8Array): Uint8Array {
-  if (subtree === 'channel_members') {
-    return hashStateLeaf(concat(u32be(key.length), key, u32be(value.length), value));
-  }
+/** Leaf of a record: `hashStateLeaf(value)` — each canonical value names
+ *  its own identity (address, channel id, user + device key). */
+export function stateRecordLeaf(value: Uint8Array): Uint8Array {
   return hashStateLeaf(value);
 }
 
@@ -228,7 +221,7 @@ export function stateRootFromPath(
   return s === siblings.length ? hash : null;
 }
 
-/** Frame the four `(count, root)` pairs into the anchored state root. */
+/** Frame the subtree `(count, root)` pairs into the anchored state root. */
 export function frameStateRoot(subtrees: ReadonlyArray<{ count: number; root: Uint8Array }>): Uint8Array {
   return sha256(concat(STATE_ROOT_DOMAIN, ...subtrees.flatMap((s) => [u64be(s.count), s.root])));
 }
@@ -255,9 +248,11 @@ export function verifyStateProof(proof: StateProof, expected: StateProofExpectat
   if (!Array.isArray(proof.siblings) || proof.siblings.length > 64) return fail('bad siblings');
   const siblings = proof.siblings.map((h) => fromHex(h, 32));
   if (siblings.some((s) => !s)) return fail('bad sibling hash');
-  if (!Array.isArray(proof.subtrees) || proof.subtrees.length !== 4) return fail('bad subtrees');
+  if (!Array.isArray(proof.subtrees) || proof.subtrees.length !== STATE_SUBTREES.length) {
+    return fail('bad subtrees');
+  }
   const framed: { count: number; root: Uint8Array }[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < STATE_SUBTREES.length; i++) {
     const st = proof.subtrees[i];
     const root = fromHex(st?.root, 32);
     if (st?.name !== STATE_SUBTREES[i] || !root || !Number.isSafeInteger(st.count) || st.count < 0) {
@@ -289,7 +284,7 @@ export function verifyStateProof(proof: StateProof, expected: StateProofExpectat
   }
   if (!valueMatchesQuery(query, record)) return fail('record does not belong to the queried key');
 
-  if (!equal(stateRecordLeaf(proof.subtree, key, value), leaf)) return fail('value does not match leaf');
+  if (!equal(stateRecordLeaf(value), leaf)) return fail('value does not match leaf');
   if (framed[index].count !== proof.leaf_count) return fail('leaf_count does not match subtree count');
   const subRoot = stateRootFromPath(leaf, proof.leaf_index, proof.leaf_count, siblings as Uint8Array[]);
   if (!subRoot) return fail('malformed inclusion path');

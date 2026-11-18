@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   verifyStateProof,
   verifyStateProofOnChain,
+  stateRecordKey,
   type StateProof,
   type StateProofQuery,
 } from './stateProof';
@@ -11,72 +12,95 @@ import { getFinalCanonicalAnchor } from './sc_queries';
  * Known-answer vectors produced by l2-node
  * `api::state_proofs::tests::known_answer_vector` (print them with
  * `OGMARA_PRINT_VECTORS=1 cargo test known_answer_vector -- --nocapture`)
- * against a fixed 5-user / 2-channel / 2-membership state: a 2-leaf
- * channel-membership proof and the last leaf of the odd 5-leaf users
- * subtree. If the node test's pinned root changes, regenerate both.
+ * against a fixed chain mirror (5 users, 2 channels, 1 delegation; state
+ * root v4): a 2-leaf channel proof, the last leaf of the odd 5-leaf users
+ * subtree, and a single-leaf delegation proof. If the node test's pinned
+ * root changes, regenerate all three.
  */
-const MEMBER: StateProof = {"block_height":500,"canonical_confirmed":false,"key":"00000000000000036b6c76317573657231","leaf":"04cc4282fbb9ef6dc1e69de83409e26eb8c361846fb6d037378ccded537fcad2","leaf_count":2,"leaf_index":0,"siblings":["d04af2e5bb70005da65bfb52c6f2abd89cc3d302ddaaab0855a159d43a834cea"],"state_root":"099064e5796505367550de365185ed7aed10e3fd80189299012012eb16a4eaef","subtree":"channel_members","subtrees":[{"count":5,"name":"users","root":"75540336d69e8c916f85df8ea06f8860f73f0a44c0e8fde5dcbc93cb17e10fe7"},{"count":2,"name":"channels","root":"590bd089e04f8cbd636df09bac26f51e51df628e0c569e9ceebf3510098a4256"},{"count":0,"name":"delegations","root":"0000000000000000000000000000000000000000000000000000000000000000"},{"count":2,"name":"channel_members","root":"27228e65ed09b02599aeda520b8b49d3d7631efe42586c877debe52e124cf77c"}],"value":"eyJyb2xlIjoibWVtYmVyIn0="};
-const USER: StateProof = {"block_height":500,"canonical_confirmed":false,"key":"6b6c76317573657234","leaf":"7eb950275ec6492db4b5f83792d1e3a6c3ba271893e2cc49bb1ce6b93d7a8e9f","leaf_count":5,"leaf_index":4,"siblings":["e9bc6d8b1747632666dd883d993da5f29cb188d842644690eed50ee7901b37d5"],"state_root":"099064e5796505367550de365185ed7aed10e3fd80189299012012eb16a4eaef","subtree":"users","subtrees":[{"count":5,"name":"users","root":"75540336d69e8c916f85df8ea06f8860f73f0a44c0e8fde5dcbc93cb17e10fe7"},{"count":2,"name":"channels","root":"590bd089e04f8cbd636df09bac26f51e51df628e0c569e9ceebf3510098a4256"},{"count":0,"name":"delegations","root":"0000000000000000000000000000000000000000000000000000000000000000"},{"count":2,"name":"channel_members","root":"27228e65ed09b02599aeda520b8b49d3d7631efe42586c877debe52e124cf77c"}],"value":"eyJhZGRyZXNzIjoia2x2MXVzZXI0In0="};
-const ROOT = MEMBER.state_root;
-const MEMBER_Q: StateProofQuery = { subtree: 'channel_members', channelId: 3, address: 'klv1user1' };
+const CHANNEL: StateProof = {"block_height":500,"canonical_confirmed":false,"key":"630000000000000003","leaf":"c45238dd6a6d83e9c4e5dd20663fa3a6fc85433e5d57fc127ceebf0bcbf7d921","leaf_count":2,"leaf_index":0,"siblings":["384c8f387b2971cb53f371ed6fab0414df18c65c705309daa5576a56466cd4c3"],"state_root":"6cb987a18c71bad25df6d0668029179f0fcdb64affb65db16e10acd9b5b3099c","subtree":"channels","subtrees":[{"count":5,"name":"users","root":"589c1e54e7109290951161bbe6bf180d9db6b62ea8d1f3b484cc947cc3375b6a"},{"count":2,"name":"channels","root":"0ce7899984e0d6656c8cd387fb38f8569dd7de98dccd622e11d126d1d8c0948e"},{"count":1,"name":"delegations","root":"d70daa3e7648e70e6fcdc7d803c9c4bf75e8d386453d4c8161fe48da877607a7"}],"value":"eyJjaGFubmVsX2lkIjozLCJjcmVhdG9yIjoia2x2MXVzZXIxIiwic2x1ZyI6Im5ld3MifQ=="};
+const USER: StateProof = {"block_height":500,"canonical_confirmed":false,"key":"756b6c76317573657234","leaf":"ed6a48f6bd73e8433f079e5983248f559d311d6ec6532d51f069f4e0d7582592","leaf_count":5,"leaf_index":4,"siblings":["f6d7535896a83b3bbc8d18390be80e62ba213c656e0157fc75bdc309413ecb3b"],"state_root":"6cb987a18c71bad25df6d0668029179f0fcdb64affb65db16e10acd9b5b3099c","subtree":"users","subtrees":[{"count":5,"name":"users","root":"589c1e54e7109290951161bbe6bf180d9db6b62ea8d1f3b484cc947cc3375b6a"},{"count":2,"name":"channels","root":"0ce7899984e0d6656c8cd387fb38f8569dd7de98dccd622e11d126d1d8c0948e"},{"count":1,"name":"delegations","root":"d70daa3e7648e70e6fcdc7d803c9c4bf75e8d386453d4c8161fe48da877607a7"}],"value":"eyJhZGRyZXNzIjoia2x2MXVzZXI0IiwicHVibGljX2tleSI6IjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDQifQ=="};
+const DELEGATION: StateProof = {"block_height":500,"canonical_confirmed":false,"key":"646b6c763175736572320061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162","leaf":"d70daa3e7648e70e6fcdc7d803c9c4bf75e8d386453d4c8161fe48da877607a7","leaf_count":1,"leaf_index":0,"siblings":[],"state_root":"6cb987a18c71bad25df6d0668029179f0fcdb64affb65db16e10acd9b5b3099c","subtree":"delegations","subtrees":[{"count":5,"name":"users","root":"589c1e54e7109290951161bbe6bf180d9db6b62ea8d1f3b484cc947cc3375b6a"},{"count":2,"name":"channels","root":"0ce7899984e0d6656c8cd387fb38f8569dd7de98dccd622e11d126d1d8c0948e"},{"count":1,"name":"delegations","root":"d70daa3e7648e70e6fcdc7d803c9c4bf75e8d386453d4c8161fe48da877607a7"}],"value":"eyJjcmVhdGVkX2F0IjoxNzkwMDAwMDAwLCJkZXZpY2Vfa2V5IjoiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYiIsImV4cGlyZXNfYXQiOjAsInBlcm1pc3Npb25zIjo3LCJyZXZva2VkX2F0IjowLCJ1c2VyIjoia2x2MXVzZXIyIn0="};
+const ROOT = CHANNEL.state_root;
+const CHANNEL_Q: StateProofQuery = { subtree: 'channels', channelId: 3 };
 const USER_Q: StateProofQuery = { subtree: 'users', address: 'klv1user4' };
+const DELEGATION_Q: StateProofQuery = { subtree: 'delegations', address: 'klv1user2', deviceKey: 'ab'.repeat(32) };
 
 const clone = (p: StateProof): StateProof => JSON.parse(JSON.stringify(p));
 const b64json = (v: unknown) => Buffer.from(JSON.stringify(v)).toString('base64');
+const hex = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+describe('stateRecordKey', () => {
+  it('matches the node mirror keys', () => {
+    expect(hex(stateRecordKey(USER_Q))).toBe(USER.key);
+    expect(hex(stateRecordKey(CHANNEL_Q))).toBe(CHANNEL.key);
+    expect(hex(stateRecordKey(DELEGATION_Q))).toBe(DELEGATION.key);
+  });
+});
 
 describe('verifyStateProof', () => {
   it('accepts the node known-answer proofs against their root', () => {
     expect(USER.state_root).toBe(ROOT);
-    const m = verifyStateProof(MEMBER, { stateRoot: ROOT, query: MEMBER_Q });
-    expect(m.ok).toBe(true);
-    if (m.ok) {
-      expect(m.subtree).toBe('channel_members');
-      expect(m.record).toEqual({ role: 'member' });
-      expect(m.blockHeight).toBe(500);
+    expect(DELEGATION.state_root).toBe(ROOT);
+    const c = verifyStateProof(CHANNEL, { stateRoot: ROOT, query: CHANNEL_Q });
+    expect(c.ok).toBe(true);
+    if (c.ok) {
+      expect(c.subtree).toBe('channels');
+      expect(c.record).toEqual({ channel_id: 3, creator: 'klv1user1', slug: 'news' });
+      expect(c.blockHeight).toBe(500);
     }
     const u = verifyStateProof(USER, { stateRoot: ROOT, query: USER_Q });
     expect(u.ok).toBe(true);
-    if (u.ok) expect(u.record).toEqual({ address: 'klv1user4' });
+    if (u.ok) expect(u.record).toEqual({ address: 'klv1user4', public_key: '0'.repeat(63) + '4' });
+    const d = verifyStateProof(DELEGATION, { stateRoot: ROOT, query: DELEGATION_Q });
+    expect(d.ok).toBe(true);
+    if (d.ok) expect((d.record as { revoked_at: number }).revoked_at).toBe(0);
   });
 
   it('accepts an uppercase expected root', () => {
-    expect(verifyStateProof(MEMBER, { stateRoot: ROOT.toUpperCase(), query: MEMBER_Q }).ok).toBe(true);
+    expect(verifyStateProof(CHANNEL, { stateRoot: ROOT.toUpperCase(), query: CHANNEL_Q }).ok).toBe(true);
   });
 
   it('rejects a different expected root', () => {
-    expect(verifyStateProof(MEMBER, { stateRoot: 'ab'.repeat(32), query: MEMBER_Q })).toEqual({
+    expect(verifyStateProof(CHANNEL, { stateRoot: 'ab'.repeat(32), query: CHANNEL_Q })).toEqual({
       ok: false,
       reason: 'state_root is not the expected root',
     });
   });
 
   it('rejects a genuine proof for a different record than the one asked for', () => {
-    // A valid proof that klv1user4 exists, offered for klv1user0.
     expect(verifyStateProof(USER, { stateRoot: ROOT, query: { subtree: 'users', address: 'klv1user0' } }).ok).toBe(false);
-    // A valid membership proof, offered for another channel or wallet.
     for (const query of [
-      { subtree: 'channel_members', channelId: 4, address: 'klv1user1' },
-      { subtree: 'channel_members', channelId: 3, address: 'klv1user2' },
+      { subtree: 'channels', channelId: 4 },
       { subtree: 'users', address: 'klv1user1' },
+      { subtree: 'delegations', address: 'klv1user1', deviceKey: 'ab'.repeat(32) },
     ] as StateProofQuery[]) {
-      expect(verifyStateProof(MEMBER, { stateRoot: ROOT, query }).ok).toBe(false);
+      expect(verifyStateProof(CHANNEL, { stateRoot: ROOT, query }).ok).toBe(false);
     }
+    expect(
+      verifyStateProof(DELEGATION, { stateRoot: ROOT, query: { ...DELEGATION_Q, deviceKey: 'cd'.repeat(32) } }).ok,
+    ).toBe(false);
   });
 
   it("rejects one user's genuine record relabelled with another user's key", () => {
-    // The users leaf hashes only the value, so a node can keep klv1user4's
+    // The leaf hashes only the value, so a node can keep klv1user4's
     // genuine value and path but claim the key of klv1user3.
     const p = clone(USER);
-    p.key = Buffer.from('klv1user3').toString('hex');
+    p.key = hex(stateRecordKey({ subtree: 'users', address: 'klv1user3' }));
     expect(verifyStateProof(p, { stateRoot: ROOT, query: { subtree: 'users', address: 'klv1user3' } })).toEqual({
       ok: false,
       reason: 'record does not belong to the queried key',
     });
   });
 
+  it('refuses the removed channel_members subtree', () => {
+    const p = clone(CHANNEL) as any;
+    p.subtree = 'channel_members';
+    expect(verifyStateProof(p, { stateRoot: ROOT, query: CHANNEL_Q }).ok).toBe(false);
+  });
+
   it('rejects an unsafe channel id instead of comparing rounded values', () => {
-    const query = { subtree: 'channel_members', channelId: 2 ** 53 + 1, address: 'klv1user1' } as StateProofQuery;
-    expect(verifyStateProof(MEMBER, { stateRoot: ROOT, query })).toEqual({ ok: false, reason: 'bad query' });
+    const query = { subtree: 'channels', channelId: 2 ** 53 + 1 } as StateProofQuery;
+    expect(verifyStateProof(CHANNEL, { stateRoot: ROOT, query })).toEqual({ ok: false, reason: 'bad query' });
   });
 
   it('binds the requested height and a minimum height', () => {
@@ -88,17 +112,21 @@ describe('verifyStateProof', () => {
 
   it('rejects a tampered value, sibling, index, count or subtree root', () => {
     const cases: Array<[StateProof, StateProofQuery, (p: StateProof) => void]> = [
-      [MEMBER, MEMBER_Q, (p) => { p.value = b64json({ role: 'moderator' }); }],
-      [USER, USER_Q, (p) => { p.value = b64json({ address: 'klv1user4', extra: 1 }); }],
-      [MEMBER, MEMBER_Q, (p) => { p.siblings[0] = '00'.repeat(32); }],
-      [MEMBER, MEMBER_Q, (p) => { p.leaf_index = 1; }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.value = b64json({ channel_id: 3, creator: 'klv1mallory', slug: 'news' }); }],
+      [USER, USER_Q, (p) => { p.value = b64json({ address: 'klv1user4', public_key: 'ff' }); }],
+      [DELEGATION, DELEGATION_Q, (p) => {
+        const r = JSON.parse(Buffer.from(p.value, 'base64').toString());
+        p.value = b64json({ ...r, revoked_at: 0, expires_at: 1 });
+      }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.siblings[0] = '00'.repeat(32); }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.leaf_index = 1; }],
       [USER, USER_Q, (p) => { p.leaf_index = 3; }],
       [USER, USER_Q, (p) => { p.leaf_count = 6; p.subtrees[0].count = 6; }],
-      [MEMBER, MEMBER_Q, (p) => { p.subtrees[0].root = '11'.repeat(32); }],
-      [MEMBER, MEMBER_Q, (p) => { p.subtrees[0].count += 1; }],
-      [MEMBER, MEMBER_Q, (p) => { p.siblings.push('00'.repeat(32)); }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.subtrees[0].root = '11'.repeat(32); }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.subtrees[0].count += 1; }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.siblings.push('00'.repeat(32)); }],
       [USER, USER_Q, (p) => { p.siblings.pop(); }],
-      [MEMBER, MEMBER_Q, (p) => { p.subtrees.reverse(); }],
+      [CHANNEL, CHANNEL_Q, (p) => { p.subtrees.reverse(); }],
     ];
     for (const [base, query, mutate] of cases) {
       const p = clone(base);
@@ -119,13 +147,13 @@ describe('verifyStateProof', () => {
       (p) => { p.subtree = 'messages'; },
     ];
     for (const mutate of cases) {
-      const p = clone(MEMBER);
+      const p = clone(CHANNEL);
       mutate(p);
-      expect(verifyStateProof(p, { stateRoot: ROOT, query: MEMBER_Q }).ok).toBe(false);
+      expect(verifyStateProof(p, { stateRoot: ROOT, query: CHANNEL_Q }).ok).toBe(false);
     }
-    expect(verifyStateProof(null as any, { stateRoot: ROOT, query: MEMBER_Q }).ok).toBe(false);
-    expect(verifyStateProof(MEMBER, undefined as any).ok).toBe(false);
-    expect(verifyStateProof(MEMBER, { stateRoot: 'nope', query: MEMBER_Q }).ok).toBe(false);
+    expect(verifyStateProof(null as any, { stateRoot: ROOT, query: CHANNEL_Q }).ok).toBe(false);
+    expect(verifyStateProof(CHANNEL, undefined as any).ok).toBe(false);
+    expect(verifyStateProof(CHANNEL, { stateRoot: 'nope', query: CHANNEL_Q }).ok).toBe(false);
   });
 });
 
@@ -209,12 +237,12 @@ describe('getFinalCanonicalAnchor', () => {
 describe('verifyStateProofOnChain', () => {
   it('verifies against the on-chain root', async () => {
     stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)] });
-    expect((await verifyStateProofOnChain(MEMBER, MEMBER_Q, 'testnet')).ok).toBe(true);
+    expect((await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).ok).toBe(true);
   });
 
   it('fails when the chain anchored a different root', async () => {
     stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64('ef'.repeat(32))] });
-    expect(await verifyStateProofOnChain(MEMBER, MEMBER_Q, 'testnet')).toEqual({
+    expect(await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).toEqual({
       ok: false,
       reason: 'state_root is not the expected root',
     });
@@ -222,6 +250,6 @@ describe('verifyStateProofOnChain', () => {
 
   it('reports not_canonical when there is no final root', async () => {
     stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [b64([])] });
-    expect(await verifyStateProofOnChain(MEMBER, MEMBER_Q, 'testnet')).toEqual({ ok: false, reason: 'not_canonical' });
+    expect(await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).toEqual({ ok: false, reason: 'not_canonical' });
   });
 });

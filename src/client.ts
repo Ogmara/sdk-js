@@ -344,13 +344,12 @@ export class OgmaraClient {
   }
 
   /**
-   * GET /api/v1/state/proof (l2-node 0.147.0+) — inclusion proof that a
-   * user, channel, delegation or channel-membership record is part of the
-   * state root the node anchored on-chain. Not trusted until verified with
-   * `verifyStateProofOnChain` (or `verifyStateProof` against a root you got
-   * from the chain). Nodes without anchoring answer 404 `no_checkpoint`;
-   * a record changed since the checkpoint is 409 `record_changed`; private
-   * channels are refused (403). Public.
+   * GET /api/v1/state/proof (l2-node 0.148.0+, anchored root v4) — inclusion
+   * proof that an on-chain user registration, channel or device delegation
+   * is part of the state root sealed at an anchor height. Not trusted until
+   * verified with `verifyStateProofOnChain` (or `verifyStateProof` against a
+   * root you got from the chain). 404 `no_checkpoint` (nothing sealed at
+   * that height) or `not_in_checkpoint`; 503 `busy` (retry shortly). Public.
    */
   async getStateProof(query: StateProofQuery): Promise<StateProof> {
     stateRecordKey(query); // validates the query (safe-integer channel id)

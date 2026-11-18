@@ -5,6 +5,38 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.70.0] - 2026-11-18
+
+### Changed
+
+- **State proofs verify anchored state root v4 (l2-node 0.148.0+).** The
+  anchored root now covers only the node's chain mirror, so nodes that saw
+  the same chain anchor the same root and heights actually go canonical.
+  - Three subtrees (`STATE_SUBTREES` = users, channels, delegations), domain
+    `ogmara-state-root-v4`. `channel_members` is gone from
+    `StateProofQuery` — memberships are gossip state, authenticated by
+    signatures, not anchored.
+  - Records: users `{address, public_key}` (exists exactly for on-chain
+    registered wallets), channels `{channel_id, creator, slug}`, delegations
+    `{created_at, device_key, expires_at, permissions, revoked_at, user}` —
+    check `revoked_at` / `expires_at` before trusting a delegation.
+  - `stateRecordKey` returns the mirror keys (`u` + address, `c` + u64 BE
+    id, `d` + address + 0x00 + device key); the identity check reads the
+    new field names.
+  - **Breaking:** `stateRecordLeaf(value)` takes the value only (every leaf
+    is `hashStateLeaf(value)`). v3 proofs (0.147.x nodes) no longer verify;
+    no v3 root ever became canonical.
+
+### Security
+
+- **`picomatch` ReDoS (GHSA-fc5q-39xc-vjpf) — no fix available, build
+  tooling only.** Every release up to 4.0.7 is affected and 4.0.7 is the
+  newest published version, so neither an upgrade nor a pin clears it;
+  `npm audit`'s suggested "fix" is a major vitest downgrade that does not
+  help. It reaches the tree only through dev dependencies (`tsup`,
+  `vitest`/`vite` via `tinyglobby`/`fdir`) and is not in the published
+  package. Clears when picomatch ships a patched release (> 4.0.7).
+
 ## [0.69.0] - 2026-11-14
 
 ### Added

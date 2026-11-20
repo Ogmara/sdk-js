@@ -5,6 +5,55 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.0] - 2026-11-20
+
+### Added
+
+- **Message permalinks — SDK part** (permalink plan §5.5; `around` needs
+  l2-node 0.150.0+).
+  - `getChannelMessages(channelId, { limit?, before?, after?, around? })`:
+    options-object overload. Cursors must be 64-hex msg_ids (`RangeError`
+    otherwise, before any request) and are sent lower-case; precedence
+    matches the node (`around` > `after` > `before`) and only the winning
+    cursor is sent. An empty-string or `null` cursor throws too — omit the
+    key instead. `around` returns a window centred on the target. The
+    positional `(channelId, limit, before, after)` form is unchanged byte for
+    byte, including its lack of validation.
+  - `MessagesResponse`: optional `has_more_before`, `has_more_after` (exact,
+    every mode) and `target_found` (only with `around`; `false` = not on this
+    node, newest page served). `has_more` keeps its legacy per-mode meaning.
+  - `ChannelMessagesOptions` type.
+  - `buildPermalink(target, { native?, base? })` / `parsePermalink(url,
+    { extraBases?, allowNative? })` / `PermalinkTarget` (`chat`, `news` with
+    optional comment `c=`, `join` with optional `node` / `inv`) /
+    `normalizeMsgId`, `PERMALINK_BASE`, `PERMALINK_NATIVE_PREFIX`. One
+    shared implementation of the frozen formats
+    `https://ogmara.org/app/#/chat/<id>?msg=<hex>`, `#/news/<hex>[?c=<hex>]`,
+    `#/join/<id>[?node=…&inv=…]` and their `ogmara://` forms, replacing the
+    per-client regexes. No DM permalink (by design).
+
+### Security
+
+- `parsePermalink` is a strict, `URL`-free parser for hostile input: exact
+  base-prefix match (scheme/host case-insensitive, never `endsWith`), so
+  look-alike hosts, userinfo, non-default ports, `http:` and other paths are
+  rejected; ids are validated after per-segment decoding (an encoded `/`
+  cannot forge a segment); channel ids must be canonical decimal safe
+  integers (no silent rounding above 2^53); repeated query keys, bad
+  `node` / `inv` values, control characters and inputs over 8 KiB are
+  rejected. Identifiers stay in the URL fragment, which is never sent to a
+  server or link-preview crawler.
+- `node=` host hints (permalink `join` targets) must be printable ASCII
+  with no `@` in the authority: IDN homographs, bidi overrides, lone
+  surrogates and userinfo spoofs (`https://ogmara.org@evil.com`) are
+  rejected by `parsePermalink` and make `buildPermalink` return `null`
+  (it never throws on a bad target). The hint stays UNTRUSTED: run
+  `validateNodeUrl()` before any fetch, show only its host, never
+  auto-switch nodes. New export `isPermalinkNodeUrl`.
+- `buildPrivateChannelInviteUrl` uses the same check, so it can no longer
+  emit a `node=` the parser rejects; an unacceptable host hint is omitted,
+  as non-http(s) ones already were.
+
 ## [0.70.0] - 2026-11-18
 
 ### Changed

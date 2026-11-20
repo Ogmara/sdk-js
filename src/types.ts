@@ -490,10 +490,70 @@ export interface ChannelsResponse {
 
 /** Messages response with pagination cursor. */
 export interface MessagesResponse {
+  /** Always oldest-first, in every mode. */
   messages: Envelope[];
+  /**
+   * Legacy flag, unchanged byte for byte: "the page is full" in the direction
+   * the node scanned — OLDER history for the newest page and `before`, NEWER
+   * messages for `after`. In `around` mode it equals `has_more_before` when
+   * the target was found; an unresolved `around` falls back to the newest
+   * page and carries that page's legacy value. Prefer the two exact flags
+   * below on l2-node 0.150.0+.
+   */
   has_more: boolean;
+  /**
+   * EXACT (l2-node 0.150.0+): an indexed message of this channel exists
+   * older than `messages[0]`. Always `true` in `after` mode (the cursor row is
+   * older). Absent on older nodes — fall back to `has_more`.
+   */
+  has_more_before?: boolean;
+  /**
+   * EXACT (l2-node 0.150.0+): an indexed message of this channel exists
+   * newer than the last returned row. Always `true` in `before` mode (the
+   * cursor row is newer); `false` on the newest page, including an
+   * unresolved cursor's fallback. Drives "jump to present" after a permalink
+   * jump: when it goes `false` the window has merged with the live tail.
+   * Absent on older nodes.
+   */
+  has_more_after?: boolean;
+  /**
+   * Present ONLY when `around` was sent (l2-node 0.150.0+). `true`: the
+   * window is centred on the target. `false`: the msg_id is malformed,
+   * unknown, or not indexed in THIS channel (indistinguishable by design) and
+   * the response is the newest page instead — show "this message isn't on
+   * your current node", not "not found". `undefined` with `around` sent means
+   * a pre-0.150.0 node that ignored the cursor (newest page served).
+   */
+  target_found?: boolean;
   /** Unix ms timestamp of the user's last read position (only present when authenticated). */
   last_read_ts?: number;
+}
+
+/**
+ * Options form of {@link OgmaraClient.getChannelMessages} (sdk-js 0.71.0+).
+ *
+ * Cursors are 64-char hex msg_ids (validated client-side, sent lower-case).
+ * Precedence matches the node: `around` > `after` > `before`; only the
+ * winning cursor is sent. With no cursor the newest page is returned.
+ */
+export interface ChannelMessagesOptions {
+  /**
+   * Page size, default 50. The node clamps to 0..100 for the newest page,
+   * `before` and `after`, and to 1..100 for `around` (the target counts
+   * toward the limit).
+   */
+  limit?: number;
+  /** Return messages strictly OLDER than this msg_id (scroll up). */
+  before?: string;
+  /** Return messages strictly NEWER than this msg_id (scroll down / incremental). */
+  after?: string;
+  /**
+   * Permalink jump (l2-node 0.150.0+): a window of `L = clamp(limit,1,100)`
+   * rows — `ceil((L-1)/2)` older, the target, `floor((L-1)/2)` newer —
+   * ascending. Check {@link MessagesResponse.target_found}. Older nodes
+   * ignore it and return the newest page with `target_found` absent.
+   */
+  around?: string;
 }
 
 /** News list response. */

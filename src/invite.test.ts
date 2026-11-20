@@ -1,3 +1,4 @@
+import { parsePermalink, MAX_PERMALINK_INV_LEN } from './permalink';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { decode, encode } from '@msgpack/msgpack';
 import { WalletSigner } from './auth';
@@ -294,6 +295,18 @@ describe('URL helpers', () => {
     expect(() => buildPrivateChannelInviteUrl(CID + 1, env)).toThrow(/different channel/);
     expect(() => buildPrivateChannelInviteUrl(0, env)).toThrow(RangeError);
     expect(() => buildPrivateChannelInviteUrl(CID, new Uint8Array([1, 2]))).toThrow();
+  });
+
+  it('buildPrivateChannelInviteUrl only emits node hints parsePermalink accepts (omits the rest)', async () => {
+    const signer = await newSigner();
+    const env = await buildInvite(signer, CID, 'klv1target');
+    const want = `https://ogmara.org/app/#/join/${CID}?inv=${encodeInviteForUrl(env)}`;
+    for (const bad of ['https://ogmara.org@evil.com', 'https://\u043egmara.org', 'https://a\u202eb.org', 'https://a\ud800b.org', 'https://a b']) {
+      expect(buildPrivateChannelInviteUrl(CID, env, bad)).toBe(want);
+    }
+    const ok = buildPrivateChannelInviteUrl(CID, env, 'https://host.example:41721');
+    expect(parsePermalink(ok)).toMatchObject({ kind: 'join', channelId: CID, node: 'https://host.example:41721' });
+    expect(MAX_PERMALINK_INV_LEN).toBe(Math.ceil((MAX_INVITE_ENVELOPE_BYTES * 4) / 3));
   });
 });
 

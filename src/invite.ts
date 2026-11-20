@@ -22,6 +22,7 @@
 
 import { decode } from '@msgpack/msgpack';
 import { MessageType, MSG_TYPE_NAME, type Notification } from './types';
+import { isPermalinkNodeUrl } from './permalink';
 
 // --- Constants (mirror the node's verification rules) ---
 
@@ -443,7 +444,8 @@ export function selectPendingInvite(
  * bearer link (those are not supported for Private channels). Throws if the
  * invite does not decode as a `ChannelInvite` for `channelId`, or if
  * `channelId` is not a positive safe integer. The host URL is included only
- * when it is an `http(s)://` URL; `baseUrl` defaults to
+ * when it passes `isPermalinkNodeUrl` (http(s), printable ASCII, no userinfo,
+ * ≤ 2048 chars) and is silently omitted otherwise; `baseUrl` defaults to
  * {@link DEFAULT_INVITE_LINK_BASE}.
  */
 export function buildPrivateChannelInviteUrl(
@@ -460,7 +462,9 @@ export function buildPrivateChannelInviteUrl(
   const base = (opts.baseUrl ?? DEFAULT_INVITE_LINK_BASE).replace(/\/+$/, '');
   if (!/^https?:\/\//.test(base)) throw new Error('baseUrl must be an http(s) URL');
   const params: string[] = [];
-  if (opts.hostNodeUrl && /^https?:\/\//.test(opts.hostNodeUrl)) {
+  // Same shape check as the permalink parser, so the emitted link always
+  // parses; an unacceptable host hint is omitted (existing contract).
+  if (opts.hostNodeUrl && isPermalinkNodeUrl(opts.hostNodeUrl)) {
     params.push(`node=${encodeURIComponent(opts.hostNodeUrl)}`);
   }
   params.push(`inv=${encodeInviteForUrl(inviteEnvelope)}`);

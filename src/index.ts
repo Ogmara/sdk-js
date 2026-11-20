@@ -344,3 +344,13 @@ export type {
   StateProofVerdict,
   StateProofExpectation,
 } from './stateProof';
+// Share links / message permalinks (sdk-js 0.71.0; `around` needs l2-node 0.150.0+).
+export {
+  PERMALINK_BASE,
+  PERMALINK_NATIVE_PREFIX,
+  buildPermalink,
+  parsePermalink,
+  normalizeMsgId,
+  isPermalinkNodeUrl,
+} from './permalink';
+export type { PermalinkTarget, BuildPermalinkOptions, ParsePermalinkOptions } from './permalink';

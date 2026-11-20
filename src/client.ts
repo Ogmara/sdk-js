@@ -24,6 +24,7 @@ import { stateRecordKey } from './stateProof';
 import { solveChallengeAsync } from './pow';
 import { addressToPubkey } from './encryption';
 import { normalizeHashtag } from './utils';
+import { normalizeMsgId } from './permalink';
 import { derivePrivateChannelId } from './channelId';
 import {
   DEFAULT_INVITE_TTL_MS,
@@ -85,6 +86,7 @@ import type {
   NewsCommentData,
   ChannelsResponse,
   MessagesResponse,
+  ChannelMessagesOptions,
   NewsResponse,
   NewsFeedOptions,
   HotTopicsOptions,
@@ -391,19 +393,67 @@ export class OgmaraClient {
     }
   }
 
-  /** GET /api/v1/channels/:channelId/messages
-   *  `after` returns messages newer than the given msg_id (incremental fetch).
-   *  `before` and `after` are mutually exclusive; `after` takes precedence.
+  /**
+   * GET /api/v1/channels/:channelId/messages — a page of channel messages,
+   * always oldest-first.
+   *
+   * Preferred form (sdk-js 0.71.0+): `getChannelMessages(id, { limit, before,
+   * after, around })`. Cursors are 64-hex msg_ids, validated here (throws
+   * `RangeError` on a malformed one) and sent lower-case. Precedence matches
+   * the node — `around` > `after` > `before` — and only the winning cursor is
+   * sent. `around` (l2-node 0.150.0+) returns a window centred on a message
+   * for permalink jumps; check `target_found` and `has_more_before` /
+   * `has_more_after` on the response ({@link MessagesResponse}).
+   *
+   * In the options form an empty-string or `null` cursor is NOT "no cursor":
+   * it throws `RangeError` like any malformed id — omit the key (or pass
+   * `undefined`) instead.
+   *
+   * Back-compat positional form `(channelId, limit = 50, before?, after?)`:
+   * unchanged — no client-side validation, `after` wins over `before`.
    */
+  async getChannelMessages(channelId: number, options: ChannelMessagesOptions): Promise<MessagesResponse>;
   async getChannelMessages(
     channelId: number,
-    limit = 50,
+    limit?: number,
+    before?: string,
+    after?: string,
+  ): Promise<MessagesResponse>;
+  async getChannelMessages(
+    channelId: number,
+    limitOrOptions: number | ChannelMessagesOptions = 50,
     before?: string,
     after?: string,
   ): Promise<MessagesResponse> {
+    if (typeof limitOrOptions !== 'object' || limitOrOptions === null) {
+      // Legacy positional path — kept byte-for-byte identical.
+      const limit = limitOrOptions ?? 50;
+      let path = `/api/v1/channels/${channelId}/messages?limit=${limit}`;
+      if (after) path += `&after=${encodeURIComponent(after)}`;
+      else if (before) path += `&before=${encodeURIComponent(before)}`;
+      return this.get(path);
+    }
+    const o = limitOrOptions;
+    const limit = o.limit ?? 50;
+    if (!Number.isSafeInteger(limit) || limit < 0) {
+      throw new RangeError('limit must be a non-negative integer');
+    }
+    const cursor = (name: 'around' | 'after' | 'before'): string | undefined => {
+      const v = o[name];
+      if (v === undefined) return undefined;
+      const id = normalizeMsgId(v);
+      if (!id) throw new RangeError(`${name} must be a 64-char hex msg_id`);
+      return id;
+    };
+    // Validate every supplied cursor (a malformed one is a caller bug even
+    // when it would lose on precedence), then send only the winner.
+    const around = cursor('around');
+    const afterId = cursor('after');
+    const beforeId = cursor('before');
     let path = `/api/v1/channels/${channelId}/messages?limit=${limit}`;
-    if (after) path += `&after=${encodeURIComponent(after)}`;
-    else if (before) path += `&before=${encodeURIComponent(before)}`;
+    if (around) path += `&around=${around}`;
+    else if (afterId) path += `&after=${afterId}`;
+    else if (beforeId) path += `&before=${beforeId}`;
     return this.get(path);
   }
 

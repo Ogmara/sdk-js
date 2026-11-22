@@ -5,6 +5,56 @@ All notable changes to the Ogmara JS/TS SDK will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.72.0] - 2026-11-22
+
+Anchor-verification rules for smart-contract 0.12.0 / l2-node 0.154.0
+(spec 03 state proofs, spec 12 §2.9a). **Needs SC 0.12.0** — against an
+older contract `getFinalCanonicalAnchor` / `verifyStateProofOnChain` throw
+(the tenure view does not exist), i.e. fail closed.
+
+### Security
+
+- **`getFinalCanonicalAnchor` applies the full verifier rules.** It used to
+  return any canonical root of a non-escalated height. Now it returns a
+  root only when:
+  - the height is a DAILY boundary (multiple of 21 600 blocks) at or below
+    the Klever node's chain tip — the only heights every honest anchoring
+    interval submits; at other boundaries three colluding nodes could
+    canonicalize a forged root nobody contests;
+  - a non-escalated root has SETTLED (≥ 2 700 blocks, ~3 h, behind the
+    tip) — a front-run root is canonical until honest nodes contest it;
+  - an escalated height's contest has closed with a winner (never the
+    provisional answer, nothing for a disputed height);
+  - the root has at least 3 TENURED votes (`getEligibleAgreementCount`) —
+    roots canonicalized by fresh nodes or planted before SC 0.12.0 have
+    none — holding at least 2/3 of all tenured votes at the height
+    (`getTenuredVotesAt`), so honest dissent keeps a front-run root
+    untrusted while an honest node is offline.
+  `verifyStateProofOnChain` inherits all of this; proofs at other heights
+  now report `not_canonical`. Request the node's default proof height (its
+  newest settled daily checkpoint). Trusted is not yet immutable: until the
+  height is 21 600 blocks behind the tip (or its contest has closed) a
+  tenured contest can still replace an uncontested root, so do not cache a
+  verdict as permanent before then. On a freshly launched network nothing
+  verifies for the first 7 days (no anchorer has tenure yet).
+- A malformed (non-hex) root on-chain now yields `null` instead of
+  throwing; only RPC/contract errors throw. An oversized tenured-vote total
+  counts as maximal dissent (as in l2-node) instead of decoding to 0, and
+  a tenured count above u32 counts as 0.
+
+### Added
+
+- `getEligibleAgreementCount(network, height, root)`,
+  `getTenuredVotesAt(network, height)`, and the constants
+  `TRUST_BOUNDARY_BLOCKS` (21 600), `ANCHOR_SETTLE_BLOCKS` (2 700),
+  `TRUSTED_TENURED_VOTES` (3), `TRUSTED_TENURED_SHARE` (`{ num: 2, den: 3 }`).
+
+### Changed
+
+- `getEscalatedCanonical` docs: the SC view now also answers for a closed
+  contest without a `resolveTiebreak` call, and stays empty for a disputed
+  height.
+
 ## [0.71.0] - 2026-11-20
 
 ### Added

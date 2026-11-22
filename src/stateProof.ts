@@ -295,11 +295,13 @@ export function verifyStateProof(proof: StateProof, expected: StateProofExpectat
 }
 
 /**
- * Fetch the canonical root for `proof.block_height` from the Klever SC and
- * verify that `proof` proves the record `query` asks for against it. Fails
- * with reason `not_canonical` when the height has no canonical root yet
- * (not canonicalized, or escalated and still provisional) — retry later or
- * request an older height. See {@link getFinalCanonicalAnchor} for what
+ * Fetch the trusted canonical root for `proof.block_height` from the
+ * Klever SC and verify that `proof` proves the record `query` asks for
+ * against it. Fails with reason `not_canonical` when the height has no
+ * trusted root ({@link getFinalCanonicalAnchor}: not a daily boundary,
+ * above the chain tip, not settled yet, a contest still open or disputed,
+ * or fewer than three tenured votes) — retry later or request the node's
+ * default height (its newest settled daily checkpoint). See {@link getFinalCanonicalAnchor} for what
  * "final" can and cannot guarantee.
  *
  * @throws on RPC/network failure or an error from the escalation view

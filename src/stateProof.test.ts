@@ -6,7 +6,7 @@ import {
   type StateProof,
   type StateProofQuery,
 } from './stateProof';
-import { getFinalCanonicalAnchor } from './sc_queries';
+import { getFinalCanonicalAnchor, TRUST_BOUNDARY_BLOCKS, ANCHOR_SETTLE_BLOCKS } from './sc_queries';
 
 /**
  * Known-answer vectors produced by l2-node
@@ -170,11 +170,15 @@ function vmOk(returnData: string[]) {
   } as unknown as Response;
 }
 
-/** Answer each view from a table; records the call order. */
-function stubViews(table: Record<string, string[] | (() => string[])>) {
+/** Answer each view from a table (and `/node/overview` with `tip`);
+ *  records the view call order. */
+function stubViews(table: Record<string, string[] | (() => string[])>, tip = TIP) {
   const calls: string[] = [];
-  vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
-    const { funcName } = JSON.parse(String(init.body));
+  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith('/node/overview')) {
+      return { ok: true, json: async () => ({ data: { overview: { nonce: tip } } }) } as unknown as Response;
+    }
+    const { funcName } = JSON.parse(String(init!.body));
     calls.push(funcName);
     const entry = table[funcName];
     if (!entry) throw new Error('unexpected view ' + funcName);
@@ -184,43 +188,118 @@ function stubViews(table: Record<string, string[] | (() => string[])>) {
 }
 
 const utf8b64 = (s: string) => b64(Array.from(Buffer.from(s, 'utf8')));
+/** A daily trust boundary, and a chain tip at which it has settled. */
+const D = TRUST_BOUNDARY_BLOCKS * 700;
+const TIP = D + ANCHOR_SETTLE_BLOCKS;
+const TENURED = [b64([3])];
+const TOTAL3 = [b64([3])];
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe('getFinalCanonicalAnchor', () => {
-  it('returns the canonical root for a non-escalated height', async () => {
-    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)] });
-    expect(await getFinalCanonicalAnchor('testnet', 500)).toBe(ROOT);
+  it('returns a settled, tenured root at a daily boundary', async () => {
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: TENURED, getTenuredVotesAt: TOTAL3 });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBe(ROOT);
   });
 
   it('returns null when the height is not canonical yet', async () => {
     stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [b64([])] });
-    expect(await getFinalCanonicalAnchor('testnet', 500)).toBeNull();
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
   });
 
-  it('ignores the provisional preview of an escalated height', async () => {
+  it('refuses a height off the daily grid without asking the chain', async () => {
+    const calls = stubViews({});
+    expect(await getFinalCanonicalAnchor('testnet', D + 900)).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a height above the chain tip', async () => {
+    stubViews({}, D - 1);
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('refuses a root that has not settled yet', async () => {
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)] }, D + ANCHOR_SETTLE_BLOCKS - 1);
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('refuses a root without two thirds of the tenured votes', async () => {
+    // 3 tenured colluders vs 2 honest tenured votes.
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: TENURED, getTenuredVotesAt: [b64([5])] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+    // 4 of 6 is exactly two thirds.
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: [b64([4])], getTenuredVotesAt: [b64([6])] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBe(ROOT);
+  });
+
+  it('treats an out-of-range tenured count as zero', async () => {
+    // The SC returns a u32; 2^32 is malformed and must not pass ≥ 3.
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: [b64([1, 0, 0, 0, 0])], getTenuredVotesAt: TOTAL3 });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('counts an oversized tenured total as dissent', async () => {
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: TENURED, getTenuredVotesAt: [b64([1, 0, 0, 0, 0, 0, 0, 0, 0])] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('refuses a root without tenured quorum', async () => {
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: [b64([2])] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('ignores the provisional answer of an open contest', async () => {
     const calls = stubViews({
       isDivergenceEscalated: [b64([1])],
       getEscalatedCanonical: [b64([])],
       getCanonicalAnchor: [utf8b64(ROOT)],
     });
-    expect(await getFinalCanonicalAnchor('testnet', 500)).toBeNull();
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
     expect(calls).not.toContain('getCanonicalAnchor');
   });
 
-  it('uses the materialized resolution of an escalated height', async () => {
-    stubViews({ isDivergenceEscalated: [b64([1])], getEscalatedCanonical: [utf8b64(ROOT)] });
-    expect(await getFinalCanonicalAnchor('testnet', 500)).toBe(ROOT);
+  it('uses the final result of a closed contest when it has tenured quorum', async () => {
+    stubViews({ isDivergenceEscalated: [b64([1])], getEscalatedCanonical: [utf8b64(ROOT)], getEligibleAgreementCount: TENURED, getTenuredVotesAt: TOTAL3 });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBe(ROOT);
   });
 
-  it('fails closed when the escalation view errors', async () => {
-    vi.stubGlobal('fetch', async () => ({
-      ok: true,
-      json: async () => ({ data: { data: { returnCode: 'UserError', returnMessage: 'misconfigured' } } }),
-    }) as unknown as Response);
-    await expect(getFinalCanonicalAnchor('testnet', 500)).rejects.toThrow();
+  it('refuses a contest winner without tenured quorum', async () => {
+    stubViews({ isDivergenceEscalated: [b64([1])], getEscalatedCanonical: [utf8b64(ROOT)], getEligibleAgreementCount: [b64([1])] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
+  });
+
+  it('fails closed when a view errors', async () => {
+    vi.stubGlobal('fetch', async (url: string) => (String(url).endsWith('/node/overview')
+      ? { ok: true, json: async () => ({ data: { overview: { nonce: TIP } } }) }
+      : { ok: true, json: async () => ({ data: { data: { returnCode: 'UserError', returnMessage: 'misconfigured' } } }) }) as unknown as Response);
+    await expect(getFinalCanonicalAnchor('testnet', D)).rejects.toThrow();
+  });
+
+  it('passes the height and the hex of the lowercase root string to the tenure view', async () => {
+    const seen: string[][] = [];
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/node/overview')) {
+        return { ok: true, json: async () => ({ data: { overview: { nonce: TIP } } }) } as unknown as Response;
+      }
+      const { funcName, args } = JSON.parse(String(init!.body));
+      if (funcName === 'getEligibleAgreementCount') seen.push(args);
+      const table: Record<string, string[]> = {
+        isDivergenceEscalated: [b64([])],
+        getCanonicalAnchor: [utf8b64(ROOT.toUpperCase())],
+        getEligibleAgreementCount: TENURED,
+        getTenuredVotesAt: TOTAL3,
+      };
+      return vmOk(table[funcName]);
+    });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBe(ROOT.toLowerCase());
+    expect(seen).toEqual([[D.toString(16).padStart(Math.ceil(D.toString(16).length / 2) * 2, '0'), Buffer.from(ROOT.toLowerCase(), 'utf8').toString('hex')]]);
+  });
+
+  it('returns null for a malformed root', async () => {
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64('zz'.repeat(32))] });
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
   });
 
   it('re-checks escalation after reading the root', async () => {
@@ -230,26 +309,29 @@ describe('getFinalCanonicalAnchor', () => {
       getCanonicalAnchor: [utf8b64('cd'.repeat(32))],
       getEscalatedCanonical: [b64([])],
     });
-    expect(await getFinalCanonicalAnchor('testnet', 500)).toBeNull();
+    expect(await getFinalCanonicalAnchor('testnet', D)).toBeNull();
   });
 });
 
 describe('verifyStateProofOnChain', () => {
+  const proof = { ...CHANNEL, block_height: D };
+
   it('verifies against the on-chain root', async () => {
-    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)] });
-    expect((await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).ok).toBe(true);
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64(ROOT)], getEligibleAgreementCount: TENURED, getTenuredVotesAt: TOTAL3 });
+    expect((await verifyStateProofOnChain(proof, CHANNEL_Q, 'testnet')).ok).toBe(true);
   });
 
   it('fails when the chain anchored a different root', async () => {
-    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64('ef'.repeat(32))] });
-    expect(await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).toEqual({
+    stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [utf8b64('ef'.repeat(32))], getEligibleAgreementCount: TENURED, getTenuredVotesAt: TOTAL3 });
+    expect(await verifyStateProofOnChain(proof, CHANNEL_Q, 'testnet')).toEqual({
       ok: false,
       reason: 'state_root is not the expected root',
     });
   });
 
-  it('reports not_canonical when there is no final root', async () => {
+  it('reports not_canonical when there is no trusted root', async () => {
     stubViews({ isDivergenceEscalated: [b64([])], getCanonicalAnchor: [b64([])] });
-    expect(await verifyStateProofOnChain(CHANNEL, CHANNEL_Q, 'testnet')).toEqual({ ok: false, reason: 'not_canonical' });
+    expect(await verifyStateProofOnChain(proof, CHANNEL_Q, 'testnet')).toEqual({ ok: false, reason: 'not_canonical' });
   });
 });
+

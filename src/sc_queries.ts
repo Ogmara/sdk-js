@@ -221,20 +221,17 @@ export async function getChannelInfo(
 }
 
 /**
- * Raw read of a contested anchor height's MATERIALIZED resolution, or
- * `null` if it has not (yet) been finalized on-chain — either via
- * escalated-quorum agreement or a completed `resolveTiebreak` call.
- * Mirrors the SC's `getEscalatedCanonical` view (0.7.0).
+ * A contested anchor height's FINAL answer, or `null` while its contest is
+ * still open. Mirrors the SC's `getEscalatedCanonical` view: the stored
+ * `resolveTiebreak` winner, or — since SC 0.12.0 — the winner once the
+ * contest's 24 h window has closed (no further submissions are accepted).
+ * `null` also for a closed DISPUTED height (tied vote counts, no root) and
+ * for a height that never escalated.
  *
  * Distinct from a raw `getCanonicalAnchor` call (use
- * {@link getFinalCanonicalAnchor}, which applies this distinction): for an
- * escalated height, `getCanonicalAnchor` starts returning the §2.9
- * tiebreak's PROVISIONAL preview the instant escalation triggers — well
- * before the 24h grace window closes — and that preview can still be
- * overridden by real escalated-quorum agreement on a different root
- * during the window. This function never computes or returns that
- * preview; `null` means "still provisional or not escalated," never
- * "resolved to nothing."
+ * {@link getFinalCanonicalAnchor}, which applies the full verifier rules):
+ * for an escalated height `getCanonicalAnchor` returns a PROVISIONAL answer
+ * while the contest is open, which can still change when it closes.
  */
 export async function getEscalatedCanonical(
   network: ScNetwork,
@@ -273,24 +270,122 @@ async function isDivergenceEscalated(
   return b !== undefined && b.length > 0 && b[b.length - 1] === 1;
 }
 
+/** Verifiers trust anchored roots only at multiples of this many blocks
+ *  (24 h): the only boundaries every honest anchoring interval submits
+ *  (spec 03; spec 12 §2.9a, SC 0.12.0 / l2-node 0.154.0). */
+export const TRUST_BOUNDARY_BLOCKS = 21_600;
+
+/** Blocks a non-escalated root must be behind the chain tip before it is
+ *  trusted (~3 h): until honest nodes contest a front-run root, it is the
+ *  canonical answer. */
+export const ANCHOR_SETTLE_BLOCKS = 2_700;
+
+/** Tenured agreeing votes (`getEligibleAgreementCount`) a root needs. */
+export const TRUSTED_TENURED_VOTES = 3;
+
+/** A root must also hold at least this share of ALL tenured votes at the
+ *  height (`getTenuredVotesAt`): `num / den` = 2/3, compared in integers
+ *  (`tenured * den >= total * num`), as l2-node does. Tenured colluders who
+ *  front-run a height while an honest node is offline face the honest votes
+ *  as dissent and stay untrusted instead of forging a root. */
+export const TRUSTED_TENURED_SHARE = { num: 2, den: 3 } as const;
+
 /**
- * The FINAL canonical state root anchored at `blockHeight` (64 hex chars),
- * or `null` if there is none yet — the trust anchor for
- * `verifyStateProof` (l2-node 0.147.0+ state proofs).
+ * Every tenured vote cast at `blockHeight`, whatever its root — the SC's
+ * `getTenuredVotesAt` view (SC 0.12.0). Throws on an older contract.
+ */
+export async function getTenuredVotesAt(
+  network: ScNetwork,
+  blockHeight: number,
+  opts: ScQueryOptions = {},
+): Promise<number> {
+  const { rpc, sc } = net(network);
+  assertU64Arg(blockHeight, 'blockHeight');
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  const items = await vmQuery(rpc, sc, 'getTenuredVotesAt', [u64MinimalHex(blockHeight)], timeoutMs);
+  if (items.length === 0) return 0;
+  // Parse strictly: `decodeU64Be` maps an oversized value to 0, which here
+  // would mean "no dissent" and let the share check pass. Count anything
+  // over 8 bytes as maximal dissent, as l2-node does.
+  if (items[0].length > 8) return Number.MAX_SAFE_INTEGER;
+  return decodeU64Be(items[0]);
+}
+
+/** The Klever node's current block nonce (`GET /node/overview`). */
+async function getChainTip(rpc: string, timeoutMs: number): Promise<number> {
+  const url = rpc.replace(/\/+$/, '') + '/node/overview';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let resp: Response;
+  try {
+    resp = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!resp.ok) throw new Error('node/overview HTTP ' + resp.status);
+  const json: any = await resp.json();
+  const nonce = json && json.data && json.data.overview && json.data.overview.nonce;
+  if (!Number.isSafeInteger(nonce) || nonce <= 0) {
+    throw new Error('node/overview has no nonce');
+  }
+  return nonce;
+}
+
+/**
+ * Tenured agreeing votes for (`blockHeight`, `root`) — the SC's
+ * `getEligibleAgreementCount` view (SC 0.12.0): votes from anchorers with
+ * 7 days of tenure at the contest start. Throws on an older contract.
+ */
+export async function getEligibleAgreementCount(
+  network: ScNetwork,
+  blockHeight: number,
+  root: string,
+  opts: ScQueryOptions = {},
+): Promise<number> {
+  const { rpc, sc } = net(network);
+  assertU64Arg(blockHeight, 'blockHeight');
+  if (!/^[0-9a-f]{64}$/i.test(root)) throw new Error('root must be 64 hex chars');
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  // The SC stores the root as the bytes of its 64-char hex string.
+  const rootArg = bytesToHex(new TextEncoder().encode(root.toLowerCase()));
+  const items = await vmQuery(rpc, sc, 'getEligibleAgreementCount', [u64MinimalHex(blockHeight), rootArg], timeoutMs);
+  if (items.length === 0) return 0;
+  // The SC returns a u32; anything larger is malformed and counts as no
+  // tenured votes (fail closed), as in l2-node.
+  const n = decodeU64Be(items[0]);
+  return n > 0xffff_ffff ? 0 : n;
+}
+
+/**
+ * The trusted canonical state root anchored at `blockHeight` (64 hex
+ * chars), or `null` if there is none — the trust anchor for
+ * `verifyStateProof` (l2-node 0.147.0+ state proofs). Same rules as the
+ * l2-node verifier (spec 03; SC 0.12.0):
  *
- * Applies the same finality rule as the node's divergence watcher: a
- * non-escalated height's `getCanonicalAnchor` is permanent once reached,
- * but for an escalated height it may be the §2.9 tiebreak's provisional
- * preview, so only {@link getEscalatedCanonical}'s materialized resolution
- * counts. Escalation is re-checked after reading the root so one that
- * lands between the two reads cannot slip a preview through.
+ * - only a DAILY boundary (multiple of {@link TRUST_BOUNDARY_BLOCKS}) at or
+ *   below the Klever node's chain tip — at other boundaries the honest
+ *   fleet may not anchor at all, so a forged root there goes uncontested;
+ * - an escalated height: only its final contest result
+ *   ({@link getEscalatedCanonical}) — never the provisional answer, and
+ *   nothing for a disputed height;
+ * - a non-escalated root only once it is {@link ANCHOR_SETTLE_BLOCKS}
+ *   behind the tip (a front-run root is canonical until honest nodes
+ *   contest it); escalation is re-checked after reading the root;
+ * - in every case at least {@link TRUSTED_TENURED_VOTES} tenured votes for
+ *   the root — roots by fresh nodes or planted before SC 0.12.0 have none —
+ *   that are at least two thirds of all tenured votes at the height
+ *   ({@link getTenuredVotesAt}).
  *
- * Limit: "not escalated" is the current answer, not a permanent one. In the
- * deployed SC a first-time anchorer's floor is the pre-v0.3 global height,
- * so newly registered anchorers can still contest an already-canonical past
- * height and, with escalated quorum, replace its root. Treat a result as
- * "canonical now"; for high-stakes checks prefer heights that have been
- * canonical for a while and re-check before acting.
+ * Trusted is not yet immutable: a settled, never-contested root can still
+ * be contested (three tenured votes on another root) until it is
+ * 21 600 blocks behind the tip, and a contest can then replace it — do not
+ * cache a verdict as permanent before that, or re-check it. Once that old
+ * (or once its contest has closed) the answer will not change. "Will not
+ * change" is not "honest": the scheme assumes honest tenured anchorers
+ * outnumber any colluding group (spec 12 §2.9a). A malformed canonical root
+ * on-chain yields `null` (a malformed contest result makes
+ * {@link getEscalatedCanonical} throw). Errors, including an older contract
+ * without the views, propagate (fail closed).
  */
 export async function getFinalCanonicalAnchor(
   network: ScNetwork,
@@ -300,8 +395,30 @@ export async function getFinalCanonicalAnchor(
   const { rpc, sc } = net(network);
   assertU64Arg(blockHeight, 'blockHeight');
   const timeoutMs = opts.timeoutMs ?? 8000;
+  if (blockHeight === 0 || blockHeight % TRUST_BOUNDARY_BLOCKS !== 0) return null;
+  const tip = await getChainTip(rpc, timeoutMs);
+  if (blockHeight > tip) return null;
+  const root = await settledOrFinalRoot(network, rpc, sc, blockHeight, tip, opts, timeoutMs);
+  if (root === null) return null;
+  const tenured = await getEligibleAgreementCount(network, blockHeight, root, opts);
+  if (tenured < TRUSTED_TENURED_VOTES) return null;
+  const total = await getTenuredVotesAt(network, blockHeight, opts);
+  // Integer form of tenured / total >= num / den, as l2-node computes it.
+  const { num, den } = TRUSTED_TENURED_SHARE;
+  return tenured * den >= total * num ? root : null;
+}
+
+async function settledOrFinalRoot(
+  network: ScNetwork,
+  rpc: string,
+  sc: string,
+  blockHeight: number,
+  tip: number,
+  opts: ScQueryOptions,
+  timeoutMs: number,
+): Promise<string | null> {
   if (await isDivergenceEscalated(rpc, sc, blockHeight, timeoutMs)) {
-    return getEscalatedCanonical(network, blockHeight, opts);
+    return lower(await getEscalatedCanonical(network, blockHeight, opts));
   }
   let items: Uint8Array[];
   try {
@@ -312,11 +429,16 @@ export async function getFinalCanonicalAnchor(
   }
   if (items.length === 0 || items[0].length === 0) return null;
   const root = bytesToUtf8(items[0]);
-  if (!/^[0-9a-f]{64}$/i.test(root)) {
-    throw new Error(`getCanonicalAnchor returned a malformed root (length ${root.length})`);
-  }
+  // A malformed root can only be junk written by colluders (honest nodes
+  // submit 64 lowercase hex chars): it is not trustworthy, so no root.
+  if (!/^[0-9a-f]{64}$/i.test(root)) return null;
+  if (tip < blockHeight + ANCHOR_SETTLE_BLOCKS) return null;
   if (await isDivergenceEscalated(rpc, sc, blockHeight, timeoutMs)) {
-    return getEscalatedCanonical(network, blockHeight, opts);
+    return lower(await getEscalatedCanonical(network, blockHeight, opts));
   }
   return root.toLowerCase();
+}
+
+function lower(root: string | null): string | null {
+  return root === null ? null : root.toLowerCase();
 }

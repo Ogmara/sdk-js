@@ -323,6 +323,12 @@ export {
   getChannelInfo,
   getEscalatedCanonical,
   getFinalCanonicalAnchor,
+  getEligibleAgreementCount,
+  getTenuredVotesAt,
+  TRUSTED_TENURED_SHARE,
+  TRUST_BOUNDARY_BLOCKS,
+  ANCHOR_SETTLE_BLOCKS,
+  TRUSTED_TENURED_VOTES,
 } from './sc_queries';
 export type { ScQueryOptions, ScChannelInfo } from './sc_queries';
 // Anchored state inclusion proofs (sdk-js 0.69.0, l2-node 0.147.0+).
